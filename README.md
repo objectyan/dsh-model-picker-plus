@@ -18,11 +18,14 @@ A grouped, searchable replacement for the DeepSeek Harness composer model select
 ## 安装
 
 ```powershell
-# 从 GitHub 指定 tag 安装
-dsh plugin --profile desktop add "github:<owner>/dsh-model-picker-plus#v0.2.5"
+# 直接从 GitHub 安装（无需下载）
+dsh plugin --profile desktop add github:objectyan/dsh-model-picker-plus
 
-# 或先下载 Release 里的 tgz 再安装
-dsh plugin --profile desktop add .\dsh-model-picker-plus-0.2.5.tgz
+# 指定版本 tag
+dsh plugin --profile desktop add "github:objectyan/dsh-model-picker-plus#v0.2.5"
+
+# 或直接用 Release 的 tgz 链接
+dsh plugin --profile desktop add "https://github.com/objectyan/dsh-model-picker-plus/releases/download/v0.2.5/dsh-model-picker-plus-0.2.5.tgz"
 ```
 
 ## 回滚
