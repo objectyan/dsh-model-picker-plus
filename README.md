@@ -1,7 +1,16 @@
 # dsh-model-picker-plus
 
+<div align="center">
+
 把 DSH 聊天输入框里的模型选择器替换为更适合多 Provider 场景的模型库。
 A grouped, searchable replacement for the DeepSeek Harness composer model selector.
+
+<a href="https://github.com/objectyan/dsh-model-picker-plus/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/objectyan/dsh-model-picker-plus/actions/workflows/ci.yml/badge.svg" /></a>
+<a href="https://github.com/objectyan/dsh-model-picker-plus/releases"><img alt="Release" src="https://img.shields.io/github/v/release/objectyan/dsh-model-picker-plus" /></a>
+<a href="https://github.com/objectyan/dsh-model-picker-plus/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/objectyan/dsh-model-picker-plus" /></a>
+<a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
+
+</div>
 
 ## 功能
 
