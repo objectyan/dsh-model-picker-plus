@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  /* Faithful rendering of client.js styles (DSH charcoal theme) */
+  :root {
+    --text: #e6e6e6; --muted: #9a9a9a; --border: #333;
+    --panel: #1c1c1c; --panel2: #242424; --accent: #4c8bf5;
+    --ok: #3fa95b; --danger: #e05252;
+  }
+  * { box-sizing: border-box; margin: 0; font-family: "Segoe UI", "IBM Plex Sans", system-ui, sans-serif; }
+  body {
+    background: #14161a; padding: 28px 0; display: flex; flex-direction: column;
+    align-items: center; gap: 14px; width: 460px;
+  }
+  .dropdown {
+    width: 420px; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,.45); overflow: hidden;
+  }
+  .head { padding: 10px 12px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.02); }
+  .searchrow { display: flex; gap: 8px; align-items: center; }
+  .search {
+    flex: 1; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 13px; outline: none;
+  }
+  .iconbtn { border: none; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
+  .caps { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .cap {
+    padding: 3px 8px; border-radius: 999px; font-size: 11px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+  }
+  .cap.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .list { padding: 6px; }
+  .section { padding: 6px 6px 2px; font-size: 11px; color: var(--muted); }
+  .group { border-radius: 8px; margin: 2px 0; }
+  .group.current { background: rgba(76,139,245,.08); }
+  .grouphead {
+    display: flex; align-items: center; gap: 8px; padding: 7px 9px; cursor: pointer;
+    color: var(--text); font-size: 13px; font-weight: 600;
+  }
+  .grouphead .count { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 400; }
+  .row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 9px; border-radius: 9px; cursor: pointer;
+  }
+  .row.selected { background: rgba(76,139,245,.13); }
+  .star { width: 24px; font-size: 15px; color: var(--muted); flex: none; text-align: center; }
+  .star.fav { color: #f5c542; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .dot.ok { background: var(--ok); } .dot.fail { background: var(--danger); }
+  .mname { color: var(--text); font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row.selected .mname { font-weight: 650; }
+  .mid { color: var(--muted); font-size: 11px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badges { display: flex; gap: 4px; flex: none; }
+  .badge { font-size: 10px; line-height: 16px; padding: 0 5px; border-radius: 999px; opacity: .9; }
+  .b-free { color: var(--ok); border: 1px solid var(--ok); }
+  .b-vision { color: #b48cff; border: 1px solid #b48cff; }
+  .b-tools { color: #f5a524; border: 1px solid #f5a524; }
+  .b-reason { color: var(--accent); border: 1px solid var(--accent); }
+  .b-omni { color: #35c2c1; border: 1px solid #35c2c1; }
+  .latency { color: var(--muted); font-size: 10px; flex: none; }
+  /* trigger pill (composer) */
+  .trigger {
+    display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 4px 0 8px;
+    border-radius: 24px; background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); font-size: 13px; line-height: 20px; cursor: pointer;
+  }
+  .trigger .capdots { display: inline-flex; margin: 0 2px; }
+  .trigger .capdot { width: 6px; height: 6px; border-radius: 50%; margin-left: -2px; box-shadow: 0 0 0 1px var(--panel2); }
+  .trigger .chev { color: var(--muted); font-size: 10px; padding: 0 4px; }
+  .caption { color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+  <div class="dropdown">
+    <div class="head">
+      <div class="searchrow">
+        <input class="search" value="deepseek" aria-label="搜索模型">
+        <button class="iconbtn">清除</button>
+        <button class="iconbtn">收起全部</button>
+      </div>
+      <div class="caps">
+        <span class="cap active">全部</span><span class="cap">免费</span><span class="cap">视觉</span><span class="cap">推理</span><span class="cap">工具</span>
+      </div>
+    </div>
+    <div class="list">
+      <div class="section">收藏</div>
+      <div class="row selected">
+        <span class="star fav">★</span><span class="dot ok"></span>
+        <div style="flex:1;min-width:0"><div class="mname">DeepSeek V4 Flash</div><div class="mid">free-opencode-zen / deepseek-v4-flash-free</div></div>
+        <span class="latency">212ms</span>
+        <div class="badges"><span class="badge b-free">免费</span><span class="badge b-tools">工具</span></div>
+      </div>
+      <div class="row">
+        <span class="star fav">★</span><span class="dot ok"></span>
+        <div style="flex:1;min-width:0"><div class="mname">DeepSeek V3.2</div><div class="mid">deepseek / deepseek-chat</div></div>
+        <span class="latency">340ms</span>
+        <div class="badges"><span class="badge b-tools">工具</span><span class="badge b-reason">推理</span></div>
+      </div>
+
+      <div class="section">最近使用</div>
+      <div class="row">
+        <span class="star">☆</span><span class="dot ok"></span>
+        <div style="flex:1;min-width:0"><div class="mname">GLM 5.2 free</div><div class="mid">free-openrouter / z-ai/glm-5.2:free</div></div>
+        <div class="badges"><span class="badge b-free">免费</span></div>
+      </div>
+
+      <div class="section">Provider</div>
+      <div class="group current">
+        <div class="grouphead">▾ OpenCode Zen (free)<span class="count">7 个模型 · 当前</span></div>
+        <div class="row selected">
+          <span class="star fav">★</span><span class="dot ok"></span>
+          <div style="flex:1;min-width:0"><div class="mname">DeepSeek V4 Flash</div><div class="mid">deepseek-v4-flash-free</div></div>
+          <span class="latency">212ms</span>
+          <div class="badges"><span class="badge b-free">免费</span><span class="badge b-tools">工具</span></div>
+        </div>
+        <div class="row">
+          <span class="star">☆</span><span class="dot ok"></span>
+          <div style="flex:1;min-width:0"><div class="mname">MiMo V2.5</div><div class="mid">mimo-v2.5-free</div></div>
+          <span class="latency">489ms</span>
+          <div class="badges"><span class="badge b-free">免费</span></div>
+        </div>
+        <div class="row">
+          <span class="star">☆</span><span class="dot fail"></span>
+          <div style="flex:1;min-width:0"><div class="mname">Big Pickle</div><div class="mid">big-pickle</div></div>
+          <div class="badges"><span class="badge b-free">免费</span><span class="badge b-omni">Omni</span></div>
+        </div>
+      </div>
+      <div class="group">
+        <div class="grouphead">▸ OpenRouter (free)<span class="count">22 个模型</span></div>
+      </div>
+      <div class="group">
+        <div class="grouphead">▸ NVIDIA NIM (free credits)<span class="count">81 个模型</span></div>
+      </div>
+      <div class="group">
+        <div class="grouphead">▸ DeepSeek 官方<span class="count">2 个模型</span></div>
+      </div>
+    </div>
+  </div>
+
+  <button class="trigger">
+    <span>DeepSeek V4 Flash</span>
+    <span class="capdots">
+      <span class="capdot" style="background:#3fa95b"></span>
+      <span class="capdot" style="background:#f5a524"></span>
+    </span>
+    <span class="chev">▴</span>
+  </button>
+  <div class="caption">触发器足迹与原生选择器一致 · 不挤压输入区</div>
+</body>
+</html>

@@ -10,6 +10,8 @@ A grouped, searchable replacement for the DeepSeek Harness composer model select
 <a href="https://github.com/objectyan/dsh-model-picker-plus/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/objectyan/dsh-model-picker-plus" /></a>
 <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
 
+<img alt="dsh-model-picker-plus 下拉面板" src="./docs/screenshot.png" width="420" />
+
 </div>
 
 ## 功能
