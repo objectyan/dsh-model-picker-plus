@@ -22,22 +22,30 @@ A grouped, searchable replacement for the DeepSeek Harness composer model select
 - 保留 DSH 原生思考强度（reasoning effort）选择
 - 显示 Free / Vision / Omni / Reasoning / Tools 能力标签
 - 能力过滤：全部 / 免费 / 视觉 / 推理 / 工具
-- 如果安装了 `dsh-model-health`，会读取它的 localStorage 健康结果；同时也会读取 `dsh-model-hub` 的手动健康检查结果，显示最近可用状态和延迟
+- 完全独立：不读取其他插件（如 dsh-model-hub）的任何数据，只依赖 DSH 自身的目录与会话服务
 - 复用 DSH 自己的 `modelDirectories` 和 `sessions.selectModel`，不改任何 Provider 插件
 - 容器足迹与原生选择器一致（block 容器、`min-width: 0`），不会挤压聊天输入区右侧的其他插件
 
 ## 安装
 
 ```powershell
+# 从 npm 安装（推荐；或在 DSH 插件市场搜索 dsh-model-picker-plus）
+dsh plugin --profile desktop add dsh-model-picker-plus
+
+# 指定确切版本
+dsh plugin --profile desktop add dsh-model-picker-plus@0.3.0
+
 # 直接从 GitHub 安装（无需下载）
 dsh plugin --profile desktop add github:objectyan/dsh-model-picker-plus
 
 # 指定版本 tag
-dsh plugin --profile desktop add "github:objectyan/dsh-model-picker-plus#v0.2.5"
+dsh plugin --profile desktop add "github:objectyan/dsh-model-picker-plus#v0.3.0"
 
 # 或直接用 Release 的 tgz 链接
-dsh plugin --profile desktop add "https://github.com/objectyan/dsh-model-picker-plus/releases/download/v0.2.5/dsh-model-picker-plus-0.2.5.tgz"
+dsh plugin --profile desktop add "https://github.com/objectyan/dsh-model-picker-plus/releases/download/v0.3.0/dsh-model-picker-plus-0.3.0.tgz"
 ```
+
+> 发布流程：推 `v*` tag 后 GitHub Actions 自动测试、发布 npm（含 provenance 证明）并创建带 tgz 附件的 Release，见 `.github/workflows/release.yml`。
 
 ## 回滚
 

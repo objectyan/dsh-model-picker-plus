@@ -1,0 +1,62 @@
+name: release
+
+# 推 v* tag 触发：测试 → 发 npm（Trusted Publishing，OIDC 零密钥）→ 建 GitHub Release 挂 tgz。
+# 前置条件（只需配一次）：
+#   ① 包已存在于 npm（首发用本地 npm login + npm publish 完成）；
+#   ② npm 包设置页 → Trusted Publishers → 绑定本仓库 + 本工作流文件名。
+# 之后发布零密钥：GitHub 现场签发短期 OIDC 凭证，npm 核验仓库与工作流匹配才放行。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # 创建 Release 并上传 tgz
+  id-token: write # OIDC 可信发布 + provenance 证明
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted Publishing 需要 npm CLI >= 11.5.1，runner 自带版本可能偏旧。
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - name: Syntax check
+        run: node --check client.js
+
+      - name: Client tests
+        run: node tests/client.mjs
+
+      # tag 与 package.json 版本必须一致，防止手滑打错 tag。
+      - name: Guard tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          [ "$TAG" = "$PKG" ] || { echo "::error::tag v$TAG != package.json $PKG"; exit 1; }
+
+      # 幂等：版本已在 npm 上（如首发是本地手动发的）就跳过发布，只建 Release。
+      - name: Check if version already on npm
+        id: published
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          VER="$(node -p "require('./package.json').version")"
+          if npm view "$NAME@$VER" version >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Publish to npm
+        if: steps.published.outputs.exists != 'true'
+        run: npm publish --access public --provenance
+
+      - name: Pack tarball
+        run: npm pack
+
+      # --generate-notes 从提交历史生成更新说明；tgz 作为附件供手动安装。
+      - name: Create GitHub Release
+        run: gh release create "$GITHUB_REF_NAME" ./*.tgz --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

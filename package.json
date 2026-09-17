@@ -1,8 +1,12 @@
 {
   "name": "dsh-model-picker-plus",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "description": "A grouped, searchable replacement for the DSH composer model selector.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/objectyan/dsh-model-picker-plus.git"
+  },
   "main": "index.js",
   "exports": {
     ".": "./index.js",
@@ -17,7 +21,10 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node --check client.js && node tests/client.mjs"
+    "test": "node --check client.js && node tests/client.mjs",
+    "update:metadata": "node scripts/update-model-metadata.mjs",
+    "update:brand-icons": "node scripts/update-brand-icons.mjs && node scripts/preview-brand-icons.mjs",
+    "update:brand-logos": "node scripts/update-brand-logos.mjs && node scripts/render-brand-logos.mjs"
   },
   "keywords": [
     "dsh",
@@ -41,5 +48,9 @@
       ],
       "platform": "web"
     }
+  },
+  "devDependencies": {
+    "potrace": "^2.1.8",
+    "sharp": "^0.35.4"
   }
 }
