@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.3.0';
+    const VERSION = '0.3.1';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -83,6 +83,8 @@ window.__ModuleLoader__.load({
         loadSlowTitle: '模型目录暂时没有响应',
         loadSlowHint: '可能是 Provider 插件被卸载或目录加载超时，目录恢复后会自动显示。',
         unavailable: '模型不可用',
+        subagentLocked: '子代理会话不支持切换模型',
+        selectNotReady: '模型目录尚未就绪，请稍后重试',
         search: '搜索模型、Provider、用途…',
         title: '模型库',
         current: '当前',
@@ -143,6 +145,8 @@ window.__ModuleLoader__.load({
         loadSlowTitle: 'Model directory is not responding',
         loadSlowHint: 'A provider plugin may have been removed, or loading timed out. Models appear automatically once the directory recovers.',
         unavailable: 'Models unavailable',
+        subagentLocked: 'Model switching is unavailable in subagent sessions',
+        selectNotReady: 'The model directory is not ready yet — try again shortly',
         search: 'Search models, providers, use cases…',
         title: 'Model library',
         current: 'Current',
@@ -1341,7 +1345,9 @@ window.__ModuleLoader__.load({
         try {
           const selectStarted = performance.now();
           const ok = await select(selection);
-          if (ok === false) throw new Error('selection rejected');
+          // 底层返回 false 只有一种含义：该会话不允许切换（子代理会话），
+          // 或绑定尚未就绪。给出可读原因，不再抛无意义的英文占位错误。
+          if (ok === false) throw new Error(t(available === false ? 'subagentLocked' : 'selectNotReady'));
           mark('select ok', { model: `${selection.provider}/${selection.model}`, tookMs: Math.round(performance.now() - selectStarted) });
           const key = modelKey(selection.provider, selection.model);
           setRecents(previous => {
@@ -1399,9 +1405,13 @@ window.__ModuleLoader__.load({
           hasToolsModel(currentChoice.model) ? { color: '#f5a524', label: t('tools') } : null,
         ].filter(Boolean)
         : [];
-      const triggerTitle = current
-        ? `${current.provider} / ${current.model}${triggerCapabilities.length > 0 ? ` · ${triggerCapabilities.map(cap => cap.label).join(' / ')}` : ''}`
-        : t('unavailable');
+      // 子代理会话不允许换模型：按钮禁用并说明原因（原生选择器同样不可用）。
+      const lockedBySubagent = available === false;
+      const triggerTitle = lockedBySubagent
+        ? t('subagentLocked')
+        : current
+          ? `${current.provider} / ${current.model}${triggerCapabilities.length > 0 ? ` · ${triggerCapabilities.map(cap => cap.label).join(' / ')}` : ''}`
+          : t('unavailable');
 
       const trigger = React.createElement('button', {
         ref: triggerRef,
@@ -2011,6 +2021,11 @@ window.__ModuleLoader__.load({
                 selectionUnsubscribe = null;
                 listeners.clear();
               };
+
+              // 关键：inject 阶段同步判定一次可用性（原生实现同样在 inject 里算），
+              // 否则子代理会话会先渲染出可点击的选择器，点击后才被 select 门卫拒绝，
+              // 界面又因状态翻转变成"点了没反应"。
+              computeAvailable();
 
               return {
                 // 取值器：绑定自愈后每次渲染读到最新值。

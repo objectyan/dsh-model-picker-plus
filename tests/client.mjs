@@ -821,6 +821,26 @@ const errorTree = modules.react.__withState(new Map([[1, true], [4, menuPosOverr
 const errorJson = JSON.stringify(errorTree);
 check('error state shows the failure message', errorJson.includes('[model-picker-plus]loadFailed'));
 
+console.log('\n== subagent session lock ==');
+// 子代理会话不允许换模型（DSH 原生同样禁用）：inject 阶段就要判定为不可用，
+// 触发器直接禁用并说明原因——而不是渲染成可点击、点了才报一句无意义的错。
+const subagentLocked = applyWith({
+  directoryFor: (sessionId) => sessionId === 's1' ? directory : undefined,
+  subagentAddress: () => ({ parentSessionId: 'parent', childSessionId: 'child' }),
+});
+const lockedShare = subagentLocked.inject('s1');
+check('subagent session is unavailable from the first render', lockedShare.available === false, String(lockedShare.available));
+const lockedTree = modules.react.__withState(new Map(), () => subagentLocked.component({ locked: false, ...lockedShare }));
+const lockedJson = JSON.stringify(lockedTree);
+check('subagent session explains why switching is blocked', lockedJson.includes('[model-picker-plus]subagentLocked'));
+const lockedTrigger = findNode(lockedTree, node => typeof node.props?.title === 'string' && node.props.title.includes('subagentLocked'));
+check('subagent session disables the trigger', lockedTrigger?.props?.disabled === true);
+// 旧的吞错文案彻底移除：底层返回 false 一律翻译成可读原因。
+check('opaque rejection message is gone', source.includes('selection rejected') === false
+  && typeof plugin.__test.DICT.zh.subagentLocked === 'string'
+  && typeof plugin.__test.DICT.zh.selectNotReady === 'string'
+  && typeof plugin.__test.DICT.en.subagentLocked === 'string');
+
 if (failures > 0) {
   console.error(`\n${failures} CHECK(S) FAILED`);
   process.exit(1);
