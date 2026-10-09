@@ -42,17 +42,28 @@ const encodeModalities = (list) => {
 };
 
 // 合并器：同一裸 id 跨源/跨厂家按“有就标”合并——模态取并集，
-// 工具/推理/免费任一为真即真。宁多标勿漏标（漏标用户看不到能力，多标
+// 工具/推理任一为真即真（宁多标勿漏标：漏标用户看不到能力，多标
 // 至多胶囊多一枚；且同 id 撞名极少）。
+//
+// free 位是唯一例外：它**不参与跨源 OR**。原因是同名裸 id 会被不同厂家
+// 以不同计费方式提供（官方付费的 deepseek-v4-pro 与免费镜像站的同名条目
+// 共享裸 id），一旦 OR 就会把零价记录传染给全部同名模型，运行时
+// isFreeModel 便会给官方付费渠道误挂免费胶囊。因此 free 位只在“该条目
+// 自身 id 携带 free 语境”时置位（:free / -free 变体，或 OpenRouter 的
+// 全零价 + :free 后缀），并由 freeIds 单独登记，最终只写给这些 id 自己。
 function createMerger() {
   const map = new Map();
-  const merge = (bareId, { input, tools, reasoning, free }) => {
+  const freeIds = new Set();
+  const bare = (value) => String(value ?? '').split('/').pop().toLowerCase();
+  const hasFreeSuffix = (id) => /(:free|-free)$/i.test(bare(id));
+  const merge = (bareId, { input, tools, reasoning, free, sourceId }) => {
     if (!bareId) return;
     const prev = map.get(bareId) ?? { i: new Set(), t: 0, r: 0, f: 0 };
     for (const code of input ?? []) prev.i.add(code);
     if (tools) prev.t = 1;
     if (reasoning) prev.r = 1;
-    if (free) prev.f = 1;
+    // free 只在自身带 free 语境时登记，且不写进共享的 prev.f。
+    if (free && hasFreeSuffix(sourceId ?? bareId)) freeIds.add(bareId);
     map.set(bareId, prev);
   };
   const finalize = () => {
@@ -63,7 +74,7 @@ function createMerger() {
         i: i && i !== 't' ? i : undefined,
         t: signal.t ? 1 : undefined,
         r: signal.r ? 1 : undefined,
-        f: signal.f ? 1 : undefined,
+        f: freeIds.has(id) ? 1 : undefined,
       };
       if (entry.i || entry.t || entry.r || entry.f) out.set(id, entry);
     }
@@ -86,6 +97,7 @@ async function sourceModelsDev(merge) {
         reasoning: model?.reasoning === true,
         free: typeof model?.cost?.input === 'number' && typeof model?.cost?.output === 'number'
           && model.cost.input === 0 && model.cost.output === 0,
+        sourceId: model?.id,
       });
       count += 1;
     }
@@ -109,6 +121,7 @@ async function sourceOpenRouter(merge) {
       tools: params.includes('tools'),
       reasoning: params.includes('include_reasoning') || params.includes('reasoning'),
       free: Number.isFinite(prompt) && Number.isFinite(completion) && prompt === 0 && completion === 0,
+      sourceId: model?.id,
     });
     count += 1;
   }

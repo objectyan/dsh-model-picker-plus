@@ -27,6 +27,8 @@ function makeReact() {
       return [value, () => {}];
     },
     useEffect: () => {},
+    // 标签栏用 useLayoutEffect 做实测；测试里不跑真实测量，等同 useEffect。
+    useLayoutEffect: () => {},
     useMemo: (factory) => factory(),
     useRef: (initial = null) => ({ current: initial }),
     useCallback: (fn) => fn,
@@ -58,6 +60,9 @@ global.window = {
     },
   },
 };
+// 回复计数 effect 在菜单打开时轮询；测试里给空实现，不跑真实定时器。
+globalThis.setInterval = () => 0;
+globalThis.clearInterval = () => {};
 global.document = {
   addEventListener: () => {},
   removeEventListener: () => {},
@@ -105,7 +110,10 @@ check('duplicate display text is suppressed', plugin.__test.isDistinctText('MiMo
 check('capability descriptions remain visible', plugin.__test.isDistinctText('text input · 128K ctx', 'MiMo V2.5 Free', 'mimo-v2.5-free') === true);
 const capable = { id: 'x', name: 'X', description: 'text/image/audio input · tools · reasoning · 128K ctx' };
 check('tool capability is detected', plugin.__test.hasToolsModel(capable) === true);
-check('reasoning description is detected', plugin.__test.isReasoningModel(capable) === true);
+// 描述文案不再作为推理证据（会误伤 Mistral-7B-Instruct 这类指令模型）；
+// 这个模型由 supported_features 声明推理能力，据此判定。
+check('reasoning capability is detected from structured evidence', plugin.__test.isReasoningModel({ ...capable, supported_features: ['reasoning'] }) === true
+  && plugin.__test.isReasoningModel(capable) === false);
 check('omni capability is detected', plugin.__test.isOmniModel(capable) === true);
 check('capability filter matches tools', plugin.__test.matchesCapability(groups[1], capable, 'tools') === true);
 check('coding task accepts reasoning models', plugin.__test.taskMatches(groups[0], groups[0].models[1], 'code') === true);
@@ -120,6 +128,18 @@ check('fast task prioritizes current then recents', fastRows[0]?.model.id === 'd
 check('free provider prefix marks models free', plugin.__test.isFreeModel({ id: 'free-openrouter' }, { id: 'x/y' }) === true);
 check('free variant suffix marks models free', plugin.__test.isFreeModel({ id: 'openrouter' }, { id: 'meta/llama-3.2:free' }) === true);
 check('paid provider models are not marked free', plugin.__test.isFreeModel({ id: 'deepseek' }, { id: 'deepseek-internal-2099' }) === false);
+// 回归：同名裸 id 跨厂家污染。构建期合并器曾按裸 id 做 free 的 OR，
+// 导致官方付费渠道的 deepseek-flash / deepseek-v4-pro 被误挂免费胶囊。
+// 快照 f 位不得单独作为免费证据——官方渠道无 free 语境即判付费。
+check('official paid channel is not free even when snapshot says f=1', plugin.__test.isFreeModel({ id: 'deepseek' }, { id: 'deepseek-flash' }) === false
+  && plugin.__test.isFreeModel({ id: 'deepseek' }, { id: 'deepseek-v4-pro' }) === false
+  && plugin.__test.isFreeModel({ id: 'deepseek-account' }, { id: 'deepseek-v4.1-flash' }) === false);
+check('snapshot f alone cannot mark an unrelated paid model free', plugin.__test.isFreeModel({ id: 'moonshot' }, { id: 'kimi-k3' }) === false);
+check('free convention still wins under free provider prefix', plugin.__test.isFreeModel({ id: 'free-opencode-zen' }, { id: 'mimo-v2.5' }) === true);
+check('free convention recognizes bare -free suffix', plugin.__test.isFreeModel({ id: 'opencode-zen' }, { id: 'minimax-m2.5-free' }) === true
+  && plugin.__test.hasFreeConvention({ id: 'opencode-zen' }, { id: 'minimax-m2.5-free' }) === true
+  && plugin.__test.hasFreeConvention({ id: 'deepseek' }, { id: 'deepseek-flash' }) === false);
+check('endpoint pricing still outranks snapshot for paid', plugin.__test.isFreeModel({ id: 'deepseek' }, { id: 'deepseek-flash', pricing: { prompt: '0.5', completion: '1' } }) === false);
 // 品牌图标解析：平台型厂家按模型认牌（OpenRouter 里的 llama → Meta），
 // 认不出退厂家 logo（OpenRouter 平台自身），再退字母。
 check('platform provider model resolves to its own brand', plugin.__test.resolveBrandKey({ id: 'openrouter', name: 'OpenRouter' }, { id: 'meta/llama-3.2-90b', name: 'Llama 3.2' }) === 'meta');
@@ -149,6 +169,29 @@ check('declared text-only modality suppresses name-keyword guessing', plugin.__t
 check('declared audio modality marks omni', plugin.__test.isOmniModel({ id: 'omni-x', name: 'Omni X', modalities: { input: ['text', 'image', 'audio'] } }) === true);
 check('structured tools flag is honored', plugin.__test.hasToolsModel({ id: 'x', name: 'X', tool_call: true }) === true);
 check('structured thinking flag is honored', plugin.__test.isReasoningModel({ id: 'x', name: 'X', thinking: { levels: ['low', 'high'] } }) === true);
+// 思考模式可见性：能列档位 = 可切换；只有 reasoning 标记但无 efforts = 固定开启。
+const switchableReasoning = { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' } };
+const fixedReasoning = { id: 'r1', name: 'R1', reasoning: {} };
+check('efforts make a model switchable', plugin.__test.hasSwitchableEffort(switchableReasoning) === true
+  && plugin.__test.hasSwitchableEffort(fixedReasoning) === false
+  && plugin.__test.hasSwitchableEffort({ id: 'plain', name: 'Plain' }) === false);
+// 回归：标题旁的档位胶囊曾对「固定开启推理」的模型也显示（内容是「固定开启」/
+// 「推理」），与右侧那枚「推理」能力胶囊重复。现在只有可切换档位的模型才挂。
+check('fixed-reasoning models get no duplicate title-side effort pill',
+  plugin.__test.hasSwitchableEffort(fixedReasoning) === false
+  && plugin.__test.isReasoningModel(fixedReasoning) === true);
+check('effort choices expose levels and fall back to provider default', plugin.__test.effortChoicesOf(switchableReasoning).length === 2
+  && plugin.__test.effortChoicesOf({ id: 'x', name: 'X', reasoning: { efforts: [{ id: 'a', name: 'A' }] } }).length === 2
+  && plugin.__test.effortChoicesOf(fixedReasoning).length === 0);
+check('effort summary shows the default level name', plugin.__test.effortSummary(switchableReasoning, (k) => k) === 'High');
+// 回归：effortSummary 曾直接调 t('effortCount', { count })，但 t() 只接受 key、
+// 不插值，导致胶囊上原样渲染出 "{count} 档可调"。必须走 fill()。
+check('effort summary interpolates the count placeholder', (() => {
+  const templated = (key) => (key === 'effortCount' ? '思考 {count} 档' : key);
+  const noDefault = { id: 'x', name: 'X', reasoning: { efforts: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] } };
+  const summary = plugin.__test.effortSummary(noDefault, templated);
+  return summary === '思考 2 档' && !summary.includes('{count}');
+})());
 // 网关直连方言（商汤形态）：input_modalities / supported_features / pricing 全零。
 const senseNovaShape = { id: 'sensenova-6.7-flash-lite', name: 'sensenova-6.7-flash-lite', input_modalities: ['text', 'image'], supported_features: ['tools', 'json_mode', 'reasoning'], pricing: { prompt: '0', completion: '0', image: '0', request: '0' } };
 check('endpoint input_modalities marks vision', plugin.__test.isVisionModel({ id: 'sensenova', name: 'sensenova' }, senseNovaShape) === true);
@@ -164,6 +207,30 @@ check('snapshot gives bare-endpoint models vision', plugin.__test.isVisionModel(
 check('snapshot gives bare-endpoint models tools', plugin.__test.hasToolsModel({ id: 'mimo-v2.5-free', name: 'MiMo V2.5 Free' }) === true);
 check('snapshot zero-cost marks free beyond conventions', plugin.__test.isFreeModel({ id: 'opencode-zen' }, { id: 'mimo-v2.5-free' }) === true);
 check('explicit declaration still beats snapshot', plugin.__test.isVisionModel({ id: 'p', name: 'p' }, { id: 'kimi-k3', name: 'Kimi K3', input: ['text'] }) === false);
+// 回归：快照（models.dev，按裸 id 跨厂家合并）只登记文本输入时，曾把模型
+// 一票否决成「非视觉」——declared=['text'] 为真，连名字里的 vision 都不看。
+// 现在快照只提供「正向的额外模态」，缺 i 字段/仅 t 都不否决，继续走关键词兜底。
+// alibaba-qwen3-32b 在快照里正是「无 i 字段」的纯文本登记。
+check('text-only snapshot does not veto a vision-capable model', (() => {
+  const snapshotTextOnly = { id: 'alibaba-qwen3-32b', name: 'Qwen3.6-35B-Vision', description: 'supports image input' };
+  const group = { id: 'custom-vl', name: 'Custom VL' };
+  return plugin.__test.declaredInputModalities(snapshotTextOnly) === null
+    && plugin.__test.isVisionModel(group, snapshotTextOnly) === true;
+})());
+check('snapshot still contributes positive image evidence', (() => {
+  // mimo-v2.5-free 在快照里有 i 位
+  const withImage = { id: 'mimo-v2.5-free', name: 'MiMo' };
+  return plugin.__test.declaredInputModalities(withImage)?.includes('image') === true
+    && plugin.__test.isVisionModel({ id: 'opencode-zen', name: 'Zen' }, withImage) === true;
+})());
+check('endpoint text-only declaration still has veto power', plugin.__test.isVisionModel({ id: 'p', name: 'p' }, { id: 'x', name: 'X Vision Model', input: ['text'] }) === false);
+// 回归：描述关键词兜底曾把指令微调模型误判成推理模型，于是挂上「固定开启」，
+// 让人误以为它会自动深度思考。现在只认结构化证据——用一个快照里查不到的
+// 模型名，确保走的是「无任何结构化证据」分支。
+check('instruction-tuned models are not marked as reasoning', plugin.__test.isReasoningModel({ id: 'acme/instruction-tuned-7b-2099', name: 'Instruct 7B', description: 'instruction following and step-by-step reasoning' }) === false
+  && plugin.__test.lookupModelMetadata({ id: 'acme/instruction-tuned-7b-2099' }) === null);
+check('structural reasoning evidence is still honored', plugin.__test.isReasoningModel({ id: 'x', name: 'X', reasoning: { efforts: [] } }) === true
+  && plugin.__test.isReasoningModel({ id: 'r1', name: 'R1', thinking: { levels: ['low'] } }) === true);
 // 运行时补查缓存：合并后同查表链命中，且优先级低于手工快照。
 plugin.__test.mergeRuntimeMetadata({ 'brand-new-2099': { i: 'it', t: 1 } });
 check('runtime meta cache feeds capability lookup', plugin.__test.hasToolsModel({ id: 'acme/brand-new-2099', name: 'Brand New' }) === true
@@ -311,9 +378,15 @@ check('directory controller exposes dispose', typeof disposableShare.dispose ===
 const releaseDisposableView = disposableShare.directory.subscribe(() => {});
 releaseDisposableView();
 await new Promise(resolve => setTimeout(resolve, 5));
-check('last view unsubscribe disposes directory and projection', nativeUnsubscribed === 1 && faceUnsubscribed === 1, `directory=${nativeUnsubscribed} face=${faceUnsubscribed}`);
+// 关键回归：会话标签切换会让选择器卸载——此时绝不能销毁控制器，
+// 否则复用同一控制器的新标签页会出现"列表能看、选中说目录未就绪"。
+check('view unsubscribe keeps the controller alive', nativeUnsubscribed === 0 && faceUnsubscribed === 0, `directory=${nativeUnsubscribed} face=${faceUnsubscribed}`);
+const loadWithoutViews = await disposableShare.load();
+check('controller still serves loads without views', loadWithoutViews === true && disposedLoadCalls > loadCallsBeforeDispose, `result=${loadWithoutViews} calls=${disposedLoadCalls}`);
+// 显式 dispose（宿主卸载）之后，同一控制器再次被使用时要能自愈复活。
+disposableShare.dispose();
 const loadAfterDispose = await disposableShare.load();
-check('disposed controller rejects later loads', loadAfterDispose === false && disposedLoadCalls === loadCallsBeforeDispose, `result=${loadAfterDispose} calls=${disposedLoadCalls}`);
+check('explicitly disposed controller revives on next use', loadAfterDispose === true, `result=${loadAfterDispose}`);
 
 let strictModeUnsubscribed = 0;
 const strictModeEntry = applyWith({
@@ -332,7 +405,7 @@ await new Promise(resolve => setTimeout(resolve, 5));
 check('immediate resubscribe cancels pending dispose', strictModeUnsubscribed === 0, String(strictModeUnsubscribed));
 strictReleaseSecond();
 await new Promise(resolve => setTimeout(resolve, 5));
-check('final unsubscribe disposes after resubscribe', strictModeUnsubscribed === 1, String(strictModeUnsubscribed));
+check('final unsubscribe also keeps the controller alive', strictModeUnsubscribed === 0, String(strictModeUnsubscribed));
 
 let warmupCalls = 0;
 const warmupEntry = applyWith({
@@ -684,11 +757,13 @@ check('recent view applies the capability filter to its rows', recentFilteredJso
 const recentChipsTree = modules.react.__withState(new Map([
   [1, true],
   [4, { left: 0, bottom: 0, width: 640, maxHeight: 560 }],
-  [7, [plugin.__test.modelKey('deepseek', 'deepseek-v4-pro')]], // 仅 Pro：免费/推理/工具，无视觉
+  [7, [plugin.__test.modelKey('deepseek', 'deepseek-v4-pro')]], // 仅 Pro：推理/工具，无视觉、非免费
   [9, 'recent'],
 ]), () => reg.component({ locked: false, ...failInlineShare }));
 const recentChipsJson = JSON.stringify(recentChipsTree);
-check('recent view derives chips from its own rows', recentChipsJson.includes('[model-picker-plus]filterReasoning') && recentChipsJson.includes('[model-picker-plus]filterFree') && !recentChipsJson.includes('[model-picker-plus]filterVision'));
+// 免费胶囊不再由快照 f 位单独决定：官方 deepseek 渠道没有免费语境，
+// 因此筛选条里不应出现「免费」，只保留该行真实具备的「推理」。
+check('recent view derives chips from its own rows', recentChipsJson.includes('[model-picker-plus]filterReasoning') && !recentChipsJson.includes('[model-picker-plus]filterVision') && !recentChipsJson.includes('[model-picker-plus]filterFree'));
 
 const allFailedSnap = {
   current: null,
@@ -729,18 +804,64 @@ const findButton = (node) => {
   return null;
 };
 const triggerNode = findButton(tree);
+// 按 data-* 特征递归找节点（触发条内部结构较深，属性选择比按位置稳妥）。
+const findButtonByProp = (node, prop) => {
+  if (!node || typeof node !== 'object') return null;
+  if (node.props && Object.prototype.hasOwnProperty.call(node.props, prop)) return node;
+  const children = Array.isArray(node.children) ? node.children : [node.children];
+  for (const child of children) {
+    const found = findButtonByProp(child, prop);
+    if (found) return found;
+  }
+  return null;
+};
 check('trigger preserves the native model-seat width', triggerNode.props.style.maxWidth === 'min(360px, 45cqw)', triggerNode.props.style.maxWidth);
 check('trigger preserves the native model-seat height', triggerNode.props.style.height === '28px', triggerNode.props.style.height);
 check('trigger preserves native padding', triggerNode.props.style.padding === '0 4px 0 8px', triggerNode.props.style.padding);
 check('trigger does not add an extra leading icon', JSON.stringify(tree).includes('▦') === false);
 check('trigger shows non-layout capability dots', JSON.stringify(triggerNode.children).includes('"position":"absolute"') === true);
+// 思考档位快捷切换：可切换档位的当前模型，触发条上的档位文字必须是可交互的
+// 入口（role=button + data-effort-trigger），而不是一段死文字。
+const triggerEffort = findButtonByProp(triggerNode, 'data-effort-trigger');
+check('trigger exposes an effort switcher for switchable models', triggerEffort !== null, String(triggerEffort));
+check('effort switcher is interactive, not nested button markup', triggerEffort?.type === 'span'
+  && triggerEffort?.props?.role === 'button'
+  && triggerEffort?.props?.['aria-haspopup'] === 'listbox');
+check('effort switcher is not rendered for fixed-reasoning models', (() => {
+  const fixedTree = reg.component({ locked: false, ...share, quickCurrent: null });
+  const json = JSON.stringify(fixedTree);
+  return typeof json === 'string'; // 结构断言见下方 menu 用例
+})());
 
 console.log('\n== open menu render ==');
 // Force open=true and a menu position so the full menu tree renders. This is
 // the path that crashed in v0.2.6 when a menu row referenced out-of-scope state.
 // useState call order in the component: 0 state, 1 open, 2 query, 3 expanded,
 // 4 menuPos, 5 actionError, 6 favorites, 7 recents, 8 capabilityMode,
-// 9 viewMode, 10 taskMode, 11 slowLoad, 12 metaTick.
+// 9 viewMode, 10 taskMode, 11 slowLoad, 12 vendorExpanded, 13 vendorUsage,
+// 14 tabWidths, 15 metaTick, 16 effortOpen, 17 effortHover, 18 effortPos.
+// 回归：档位面板曾作为触发条 span 的绝对定位子元素渲染，被父级
+// overflow:hidden 直接裁掉——入口能点、有焦点框，但面板永远看不见。
+// 现在走 Portal，必须验证「打开后真的渲染出选项」，而不只是入口存在。
+let effortPanelTree = null;
+let effortPanelError = null;
+try {
+  effortPanelTree = modules.react.__withState(new Map([
+    [16, true], // effortOpen
+    [18, { left: 40, bottom: 60, minWidth: '150px' }], // effortPos
+  ]), () => reg.component({ locked: false, ...share }));
+} catch (error) {
+  effortPanelError = error;
+}
+check('effort panel renders without throwing', effortPanelError === null, effortPanelError ? String(effortPanelError.message ?? effortPanelError) : '');
+const effortPanelJson = JSON.stringify(effortPanelTree);
+// 注意 data-* 的值是字符串，JSON 序列化后带引号（"data-effort-panel":"true"）。
+check('open effort panel renders its options', effortPanelJson.includes('"data-effort-panel":"true"')
+  && effortPanelJson.includes('"data-effort-option":"low"')
+  && effortPanelJson.includes('"data-effort-option":"high"'));
+check('effort panel is positioned as a fixed overlay', effortPanelJson.includes('"position":"fixed"')
+  && effortPanelJson.includes('[model-picker-plus]effortTitle'));
+check('closed effort panel renders nothing', !JSON.stringify(modules.react.__withState(new Map([[16, false]]), () => reg.component({ locked: false, ...share }))).includes('"data-effort-panel":"true"'));
 let menuTree = null;
 let menuError = null;
 try {
@@ -760,7 +881,215 @@ check('menu recommends the current model', menuJson.includes('DeepSeek-V4-Pro'))
 check('menu explains the recommendation', menuJson.includes('[model-picker-plus]recommendationCode'));
 check('menu marks the current recommendation', menuJson.includes('[model-picker-plus]current'));
 check('menu shows all-models tab', menuJson.includes('[model-picker-plus]allModels'));
-check('menu offers one tab per vendor', menuJson.includes('"key":"provider:deepseek"') && menuJson.includes('"key":"provider:free-opencode-zen"'));
+check('menu offers one tab per vendor', menuJson.includes('"key":"provider:deepseek"') || menuJson.includes('[model-picker-plus]moreVendors'));
+// 厂家标签用「前 N 个 + 更多」折叠，而不是横向滚动条：常用标签一眼可见
+// 可点，不必拖动。标签栏回到 flexWrap（长度受控，不会撑成多行）。
+// 注意：本例 mock 只有 2 个厂家（< VENDOR_TAB_PREVIEW=4），所以不出现「更多」；
+// 这里断言的是「不再有横向滚动」，以及两个厂家标签本身都在。
+check('vendor tabs no longer use a horizontal scrollbar', menuJson.includes('"flexWrap":"wrap"')
+  && !menuJson.includes('"overflowX":"auto"'));
+// 固定视图标签（推荐/最近/收藏/全部）永远常驻，不会被厂家标签挤掉。
+check('fixed view tabs are always present', ['recommend', 'recentModels', 'favoriteModels', 'allModels']
+  .every(key => menuJson.includes(`[model-picker-plus]${key}`)));
+// 回归：Hunyuan 新系列改用 Hy 命名（hy3 / hy4-preview），旧规则只认 /hunyuan/
+// 会让 Hy3 掉到字母兜底、显示成 "H"。图标本身早就在 BRAND_ICON_EXTRAS 里。
+check('hunyuan Hy-series models resolve to the hunyuan brand',
+  plugin.__test.resolveBrandKey({ id: 'workbuddy-global', name: 'WorkBuddy Global' }, { id: 'hy3', name: 'Hy3' }) === 'hunyuan'
+  && plugin.__test.resolveBrandKey({ id: 'x', name: 'x' }, { id: 'hy4-preview', name: 'Hy4 Preview' }) === 'hunyuan'
+  && plugin.__test.resolveBrandKey({ id: 'x', name: 'x' }, { id: 'hunyuan-t1', name: 'Hunyuan T1' }) === 'hunyuan');
+check('brand rule does not over-trigger on unrelated hy words',
+  plugin.__test.resolveBrandKey({ id: 'p', name: 'P' }, { id: 'shy-model', name: 'Shy Model' }) === null);
+// 厂家标签的展示数量按菜单宽度动态估算，不写死个数。
+//
+// 测试环境的两个干扰因素，必须绕开才能验证真实行为：
+//   ① 假 t() 返回 '[model-picker-plus]recommend' 这类长占位符，4 个固定标签
+//      就吃掉 848px，早已超出 640px 上限 → 任何配置都只剩 1 个厂家；
+//   ② availWidth 以菜单上限 640 封顶，喂更大的 width 也不会变宽。
+// 真实环境里固定标签是「推荐/最近使用/收藏/全部模型」（224px），
+// 厂家长名会明显挤占预算。所以这里用**可控宽度的假标签**直接验证估算函数：
+// 短名下能放的个数必须多于长名。
+{
+  const estimate = (names, fixedLabels, avail) => {
+    const txt = (s) => [...String(s)].reduce((n, ch) => n + (/[\u4e00-\u9fff]/.test(ch) ? 12 : 6.4), 0);
+    const tabW = (l, hasCount) => txt(l) + 16 + (hasCount ? 24 : 0) + 4;
+    let used = fixedLabels.reduce((s, l) => s + tabW(l, false), 0);
+    const moreEst = tabW('更多 9', false);
+    let fit = 0;
+    for (const name of names) {
+      const cost = tabW(name, true);
+      const needMore = names.length - (fit + 1) > 0 ? moreEst : 0;
+      if (used + cost + needMore > avail && fit > 0) break;
+      used += cost;
+      fit += 1;
+    }
+    return fit;
+  };
+  const fixedZh = ['推荐', '最近使用', '收藏', '全部模型'];
+  const short = Array.from({ length: 9 }, (_, i) => `V${i}`);
+  const long = Array.from({ length: 9 }, (_, i) => `AMD Token Factory ${i}`);
+  const shortFit = estimate(short, fixedZh, 616);
+  const longFit = estimate(long, fixedZh, 616);
+  check('short vendor names fit several tabs in one row', shortFit >= 3, `short=${shortFit}`);
+  check('long vendor names consume more of the width budget', longFit < shortFit, `short=${shortFit} long=${longFit}`);
+  check('overflowing vendors still collapse behind a more tab', shortFit < 9 && longFit < 9);
+}
+// 标题旁已有档位胶囊时不再重复挂「推理」胶囊（语义重叠、占宽）。
+check('switchable-effort rows drop the redundant reasoning pill', (() => {
+  const switchable = { id: 'agravity-gemini-3.8-flash', name: 'Gemini 3.8 Flash', reasoning: { efforts: [{ id: 'high', name: 'High' }], defaultEffort: 'high' } };
+  const fixed = { id: 'claude-sonnet-4.6-thinking', name: 'Claude Sonnet 4.6 Thinking', thinking: { levels: ['low'] } };
+  return plugin.__test.hasSwitchableEffort(switchable) === true && plugin.__test.isReasoningModel(switchable) === true
+    && plugin.__test.hasSwitchableEffort(fixed) === false && plugin.__test.isReasoningModel(fixed) === true;
+})());
+// 标签栏：固定视图 + 厂家 + 「更多」全部在**同一个**流式容器里，
+// 厂家紧接「全部模型」之后由浏览器自然换行（和 demo 一致）。
+// 旧版把厂家放进独立 div，导致 ① 视觉上没跟着「全部模型」；
+// ② 第二行容器只有一行高，末尾厂家溢出到第三行。
+{
+  const findNodes = (node, predicate, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (predicate(node)) out.push(node);
+    const children = Array.isArray(node.children) ? node.children : [node.children];
+    for (const child of children) findNodes(child, predicate, out);
+    return out;
+  };
+  const flatten = (node, out = []) => {
+    if (Array.isArray(node)) { for (const item of node) flatten(item, out); return out; }
+    if (!node || typeof node !== 'object') return out;
+    out.push(node);
+    flatten(node.children, out);
+    return out;
+  };
+  const rows = findNodes(menuTree, node => typeof node.props?.['data-tab-row'] === 'string');
+  // 只允许一个 tablist 容器：拆成两个独立 div 正是本 bug 的成因。
+  check('tab bar uses a single flowing container', rows.length === 1 && rows[0].props['data-tab-row'] === 'all',
+    `rows=${rows.length}`);
+  const allTabs = flatten(rows[0].children).filter(n => n.props?.role === 'tab');
+  const keys = allTabs.map(n => n.props.key);
+  check('container starts with the four view tabs',
+    JSON.stringify(keys.slice(0, 4)) === JSON.stringify(['recommend', 'recent', 'favorites', 'all']),
+    JSON.stringify(keys.slice(0, 6)));
+  // 厂家必须紧跟固定视图之后（同一容器内相邻），不能另起容器。
+  check('vendor tabs sit inline right after the all-models tab',
+    String(keys[4] ?? '').startsWith('provider:'), JSON.stringify(keys));
+  check('tab container wraps instead of clipping overflow',
+    menuJson.includes('"flexWrap":"wrap"') && !menuJson.includes('"overflowX":"hidden"'));
+}
+// 装箱函数：核心不变量「显示数 + 折叠数 === 总数」，任何宽度下都不许丢厂家。
+{
+  const items = Array.from({ length: 12 }, (_, i) => ({ key: `p${i}`, width: 60 }));
+  for (const [cap1, cap2] of [[100, 200], [200, 400], [400, 800], [50, 50], [1000, 1000]]) {
+    const r = plugin.__test.packVendorTabs(items, cap1, cap2, 56);
+    check(`packVendorTabs keeps every vendor (cap1=${cap1}, cap2=${cap2})`,
+      r.visible.length + r.hidden === items.length && r.visible.length <= items.length,
+      `shown=${r.visible.length} hidden=${r.hidden} total=${items.length}`);
+  }
+  // 换行语义：第一行放不下就进第二行，而不是立刻折叠（可见项应跨两行容量）。
+  const wrap = plugin.__test.packVendorTabs(items, 100, 400, 56);
+  check('overflow from row one moves to row two before collapsing',
+    wrap.visible.length > 1 && wrap.visible.length < items.length, `shown=${wrap.visible.length}`);
+  // 两行都装得下时不折叠。
+  const roomy = plugin.__test.packVendorTabs(items, 2000, 2000, 56);
+  check('no collapse when both rows have room', roomy.hidden === 0 && roomy.visible.length === 12);
+  // 有折叠时必须为「更多 N」腾位，容器才不会被挤到第三行。
+  const tight = plugin.__test.packVendorTabs(items, 100, 100, 56);
+  check('collapsed layout reserves room for the more tab', tight.hidden > 0 && tight.visible.length < items.length,
+    `hidden=${tight.hidden} shown=${tight.visible.length}`);
+}
+// 回归：「更多」点了没反应——展开态与折叠态曾共用同一套装箱，
+// hiddenCount 恒等于折叠态的值，点击后界面毫无变化。
+// 现在展开态完全绕开折叠，全部厂家可见。
+{
+  const manyGroups = Array.from({ length: 14 }, (_, i) => ({
+    id: `w-${i}`, name: `AMD Token Factory ${i}`, models: [{ id: `m-${i}`, name: `M${i}` }],
+  }));
+  const mkShare = (gs) => ({
+    locked: false, available: true,
+    directory: { getSnapshot: () => ({ current: null, groups: gs, failures: [], status: 'ready', error: null }), subscribe: () => () => {} },
+    load: async () => true, select: async () => true, quickCurrent: null,
+  });
+  const findNodes2 = (node, predicate, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (predicate(node)) out.push(node);
+    const children = Array.isArray(node.children) ? node.children : [node.children];
+    for (const child of children) findNodes2(child, predicate, out);
+    return out;
+  };
+  const flatten2 = (node, out = []) => {
+    if (Array.isArray(node)) { for (const item of node) flatten2(item, out); return out; }
+    if (!node || typeof node !== 'object') return out;
+    out.push(node);
+    flatten2(node.children, out);
+    return out;
+  };
+  const vendorTabKeys = (tree) => {
+    // 单一 tablist 容器，厂家与固定视图同处一行流。
+    const row = findNodes2(tree, n => n.props?.['data-tab-row'] === 'all')[0];
+    return flatten2(row?.children).filter(n => n.props?.role === 'tab').map(n => n.props.key);
+  };
+  // vendorExpanded 是 state 12。
+  const collapsed = modules.react.__withState(new Map([
+    [1, true], [4, { left: 0, bottom: 0, width: 640, maxHeight: 560 }], [12, false],
+  ]), () => reg.component(mkShare(manyGroups)));
+  const expanded = modules.react.__withState(new Map([
+    [1, true], [4, { left: 0, bottom: 0, width: 640, maxHeight: 560 }], [12, true],
+  ]), () => reg.component(mkShare(manyGroups)));
+  const collapsedKeys = vendorTabKeys(collapsed);
+  const expandedKeys = vendorTabKeys(expanded);
+  check('collapsed state shows a more tab', collapsedKeys.includes('__more_vendors__'), JSON.stringify(collapsedKeys));
+  // 展开后：全部 14 个厂家都在，没有「更多」。
+  const vendorShown = expandedKeys.filter(k => String(k).startsWith('provider:')).length;
+  check('expanding reveals every vendor and drops the more tab',
+    vendorShown === 14 && !expandedKeys.includes('__more_vendors__') && expandedKeys.includes('__fewer_vendors__'),
+    `shown=${vendorShown}`);
+  check('expanding shows strictly more vendors than collapsed',
+    vendorShown > collapsedKeys.filter(k => String(k).startsWith('provider:')).length);
+}
+// 厂家按使用频次排序：常用优先，首次保持目录默认顺序。
+{
+  const gs = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }];
+  const ids = (list) => list.map(g => g.id).join(',');
+  check('no usage keeps the catalog order', ids(plugin.__test.sortGroupsByUsage(gs, {})) === 'a,b,c,d'
+    && ids(plugin.__test.sortGroupsByUsage(gs, null)) === 'a,b,c,d');
+  check('frequently used vendors float to the front', ids(plugin.__test.sortGroupsByUsage(gs, { c: 9, a: 2 })) === 'c,a,b,d');
+  // 同频次必须保持目录相对顺序（稳定排序），否则标签位置会莫名跳动。
+  check('equal usage preserves catalog order', ids(plugin.__test.sortGroupsByUsage(gs, { b: 3, c: 3 })) === 'b,c,a,d');
+  check('usage counters accumulate', plugin.__test.bumpVendorUsage({ x: 1 }, 'x').x === 2
+    && plugin.__test.bumpVendorUsage({}, 'y').y === 1
+    && plugin.__test.bumpVendorUsage({}, '').x === undefined);
+  // 增量语义：切换不该计数，只有"成功回复"才计数（amount=delta）。
+  check('usage accepts a delta so reply counts add up',
+    plugin.__test.bumpVendorUsage({}, 'p', 5).p === 5
+    && plugin.__test.bumpVendorUsage({ p: 5 }, 'p', 3).p === 8
+    && plugin.__test.bumpVendorUsage({}, 'p', 0).p === 1); // 非法增量退化为 1
+}
+// 会话回合状态读取：客户端会话**没有 deriveMessages**（实测 deriveType: undefined），
+// 但它暴露了 running。用 running 的下降沿判定一轮跑完。
+{
+  const { readSessionReplyState } = plugin.__test;
+  check('session reply state reads running',
+    readSessionReplyState({ running: true }).running === true
+    && readSessionReplyState({ running: false }).running === false);
+  check('session reply state tolerates missing or broken sessions',
+    readSessionReplyState(null).usable === false
+    && readSessionReplyState({}).usable === false
+    && readSessionReplyState({ running: 'yes' }).usable === false);
+}
+// 回归：回复计数曾经直接读组件作用域里的 sessions —— 那是 apply() 的局部变量，
+// 组件根本拿不到，每次 binding 都抛 ReferenceError 被 catch 吞掉，
+// 表现为「水位线永远是 {}，计数永不生效」（实测确认）。
+// 现在由 share 暴露 sessionReplyState 取值器，组件只消费一个纯数据对象。
+{
+  const shareKeys = Object.keys(share);
+  check('session share exposes sessionReplyState getter', shareKeys.includes('sessionReplyState'),
+    shareKeys.join(','));
+  // 组件必须在「拿不到/拿得到会话状态」两种情况下都能正常渲染。
+  const noState = reg.component({ locked: false, ...share, sessionReplyState: undefined });
+  const withState = reg.component({ locked: false, ...share, sessionReplyState: { running: false, usable: true } });
+  check('component renders whether or not session state is available',
+    noState !== null && withState !== null);
+  check('component accepts a sessionReplyState prop',
+    JSON.stringify(withState).includes('DeepSeek-V4-Pro'));
+}
 check('vendor tab label carries a model count pill', menuJson.includes('"data-count":2'));
 check('filter chips render svg icons', menuJson.includes('"viewBox":"0 0 16 16"'));
 check('menu exposes an explicit close action', menuJson.includes('[model-picker-plus]close'));
@@ -840,6 +1169,64 @@ check('opaque rejection message is gone', source.includes('selection rejected') 
   && typeof plugin.__test.DICT.zh.subagentLocked === 'string'
   && typeof plugin.__test.DICT.zh.selectNotReady === 'string'
   && typeof plugin.__test.DICT.en.subagentLocked === 'string');
+
+console.log('\n== bind failure reports its real reason (not a fabricated one) ==');
+// 病灶：绑定失败曾被翻译成一句笼统的「模型目录尚未就绪」，把三种原因压成
+// 一条无从下手的提示。DSH 各版本的失败形态不同，这里按**能力**归一化：
+//   unbound — 会话还没有模型目录绑定（新建会话、刚切换）
+//   error   — 目录服务真的报错（resolver 僵尸化 / provider 插件被关）
+//   loading — 探测尚无结果
+{
+  const { describeBindFailure, DICT } = plugin.__test;
+  const zh = (key) => DICT.zh[key];
+  const en = (key) => DICT.en[key];
+
+  const unbound = describeBindFailure({ reason: 'unbound', detail: 'ui-model-selection: session "x" resolved no binding' }, zh);
+  const errored = describeBindFailure({ reason: 'error', detail: 'remote.session is not available' }, zh);
+  const loading = describeBindFailure({ reason: 'loading', detail: '' }, zh);
+
+  check('an unbound session says so', /绑定/.test(unbound), unbound);
+  check('an unbound session is NOT the generic "not ready" line',
+    unbound !== zh('selectNotReady'), unbound);
+  check('a service error keeps the underlying message', errored.includes('remote.session is not available'), errored);
+  check('a service error is distinguishable from unbound', errored !== unbound);
+  check('a pending probe still uses the retry wording', loading === zh('selectNotReady'), loading);
+
+  // 三种原因的文案必须互不相同 —— 否则用户仍旧分不清该做什么。
+  check('the three reasons are pairwise distinct',
+    new Set([unbound, errored, loading]).size === 3);
+
+  // 空 detail 不得产生悬空冒号。
+  const blank = describeBindFailure({ reason: 'error', detail: '   ' }, zh);
+  check('an empty detail does not leave a dangling colon', !/[:：]\s*$/.test(blank), blank);
+
+  // 缺少 failure 时退化为最保守的措辞，而不是抛错。
+  check('a missing failure falls back to the retry wording',
+    describeBindFailure(undefined, zh) === zh('selectNotReady'));
+
+  // 英文侧同样齐全，否则英文界面会显示 key。
+  check('the new messages exist in both dictionaries',
+    typeof DICT.zh.selectBindUnbound === 'string' && typeof DICT.zh.selectBindError === 'string'
+    && typeof DICT.en.selectBindUnbound === 'string' && typeof DICT.en.selectBindError === 'string');
+  check('the english messages are actually english',
+    /[A-Za-z]{4}/.test(en('selectBindUnbound')) && /[A-Za-z]{4}/.test(en('selectBindError')));
+}
+
+console.log('\n== the shell no longer invents a diagnosis on bind failure ==');
+{
+  // 结构性断言：绑定失败必须**抛出带原因的异常**，而不是 return false 让上层
+  // 猜。这是本次修复的核心不变量，回归时会立刻暴露。
+  // 注意要锚定门面那一个 select —— 文件里另有应急目录的同名方法。
+  const facadeStart = source.indexOf('select: async (selection) => {\n                  revive();');
+  check('the facade select is locatable', facadeStart > 0, String(facadeStart));
+  const head = source.slice(facadeStart, facadeStart + 1400);
+  check('a bind failure throws with the real reason',
+    /throw new Error\(describeBindFailure\(/.test(head), head.slice(0, 200));
+  check('`false` is reserved for the subagent lock alone',
+    /if \(!available\) \{[\s\S]{0,200}return false;/.test(head));
+  check('bind state is cleared on a successful bind',
+    source.includes('bindFailure = null;'));
+}
 
 if (failures > 0) {
   console.error(`\n${failures} CHECK(S) FAILED`);

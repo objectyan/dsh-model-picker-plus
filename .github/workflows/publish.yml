@@ -1,0 +1,61 @@
+name: Publish to npm
+
+# 打 tag 即发布：v0.5.0 → latest，v0.6.0-alpha.1 → alpha。
+# 用 npm 可信发布（Trusted Publishing），无需任何长期 token：
+# GitHub 通过 OIDC 签发一次性身份令牌，npm 验证它确实来自本仓库。
+# 前置条件（在 npm 包设置页配置一次）：
+#   Trusted Publisher → GitHub Actions
+#     Organization or user: objectyan
+#     Repository:           dsh-model-picker-plus
+#     Workflow filename:    publish.yml
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # 允许在 Actions 页面手动触发（用于补发/重试）。
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # 可信发布必需：允许请求 GitHub OIDC 令牌
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 可信发布要求 npm CLI >= 11.5.1，Node 22.14+ 自带
+          node-version: '22.14'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Verify version matches the tag
+        # 防止「tag 是 v0.5.0、包里却是 0.4.x」这种错发。
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::package.json 版本 ($PKG_VERSION) 与 tag ($TAG_VERSION) 不一致"
+            exit 1
+          fi
+          echo "版本一致：$PKG_VERSION"
+
+      - name: Run tests
+        # 测试不过就中断，坏版本不会进 npm。
+        run: npm test
+
+      - name: Publish
+        # tag 里含 '-'（如 0.6.0-alpha.1）→ 发 alpha 通道，否则发 latest。
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            DIST_TAG=alpha
+          else
+            DIST_TAG=latest
+          fi
+          echo "发布到 dist-tag: $DIST_TAG"
+          npm publish --provenance --access public --tag "$DIST_TAG"

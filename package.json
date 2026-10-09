@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-picker-plus",
-  "version": "0.3.1",
+  "version": "0.5.0",
   "description": "A grouped, searchable replacement for the DSH composer model selector.",
   "type": "module",
   "repository": {
@@ -18,7 +18,8 @@
     "index.js",
     "client.js",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node --check client.js && node tests/client.mjs",

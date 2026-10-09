@@ -1,0 +1,33 @@
+{
+  "plugin": "dsh-model-picker-plus",
+  "comment": "The picker replaces the composer's model seat, so its whole existence depends on the host still rendering that slot and still exposing the same remote model catalog calls. Verified by tools/dsh-seam-check.mjs.",
+  "services": [
+    { "key": "sessionController", "methods": ["modelCatalog", "selectModel"] }
+  ],
+  "optionalServices": [],
+  "events": [],
+  "exports": [
+    { "package": "@deepseek-ai/dsh-client-ui-slots", "names": ["register"] }
+  ],
+  "clientModules": [
+    "@deepseek-ai/dsh-client-ui-model-selection",
+    "@deepseek-ai/dsh-client-ui-renderer",
+    "@deepseek-ai/dsh-api-session-controller",
+    "@deepseek-ai/dsh-client-locale",
+    "@deepseek-ai/dsh-client-ui-slots"
+  ],
+  "clientAnchors": [
+    {
+      "module": "@deepseek-ai/dsh-client-ui-conversation",
+      "text": "\"conversation.input.model\"",
+      "file": "lib/client.js",
+      "why": "the composer seat must still be a rendered slot, or there is nothing to fill"
+    },
+    {
+      "module": "@deepseek-ai/dsh-client-ui-model-selection",
+      "text": "slots.inject(\"conversation.input.model\"",
+      "file": "lib/client.js",
+      "why": "the native selector still claims this slot through slots.inject/register, which is the exact pattern this plugin mirrors to take priority over it"
+    }
+  ]
+}
