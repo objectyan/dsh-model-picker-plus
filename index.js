@@ -264,6 +264,13 @@ export class ModelPickerUsage {
     this.ledgerPath = this.ledgerDir ? join(this.ledgerDir, LEDGER_FILE) : null;
     try { warnFn = typeof ctx?.logger?.warn === 'function' ? ctx.logger.warn.bind(ctx.logger) : null; } catch { warnFn = null; }
 
+    // 诊断：构造函数是否真的被调用过。这是整条链路的分水岭——
+    // 没有这一行就分不清「插件没加载」与「加载了但订阅没挂上」。
+    try {
+      mkdirSync(this.ledgerDir, { recursive: true });
+      appendFileSync(join(this.ledgerDir, 'attach.log'), `CTOR ${new Date().toISOString()}\n`, 'utf8');
+    } catch { /* 诊断写不了就算了 */ }
+
     // 在 cordis 的 init 阶段挂订阅（而不是构造函数里）：那时 fiber 已就绪，
     // ctx.on 才真正注册到活着的上下文上。
     const hooks = (this[INIT_HOOKS] ??= []);
@@ -276,13 +283,34 @@ export class ModelPickerUsage {
   _attach() {
     if (this._attached) return;
     const ctx = this.ctx;
-    if (!ctx || typeof ctx.on !== 'function') return;
-    this._attached = true;
+    const note = (line) => {
+      try {
+        const dir = this.ledgerDir ?? join(homedir(), '.dsh', 'dsh-model-picker-plus');
+        mkdirSync(dir, { recursive: true });
+        appendFileSync(join(dir, 'attach.log'), `${line}\n`, 'utf8');
+      } catch { /* 诊断写不了就算了 */ }
+    };
+    note(`ctor ${new Date().toISOString()} ctx=${ctx ? 'yes' : 'no'} on=${typeof ctx?.on}`);
+    if (!ctx || typeof ctx.on !== 'function') {
+      note('SKIP: ctx.on unavailable');
+      return;
+    }
     try {
+      // `global: true` 是关键，不加就永远收不到：
+      // cordis 的 dispatch 会按 fiber 作用域过滤监听器 ——
+      //   const filter = thisArg?.[Context.filter];
+      //   hooks.filter(hook => hook.global || !filter || filter.call(thisArg, hook.ctx))
+      // 而 llm/stream 是从 **LlmRuntime 实例**上 waterfall 出来的
+      // （`ctx.waterfall(this, "llm/stream", options, ...)`），触发者与本插件
+      // 的 fiber 不是同一个作用域，非 global 的监听器会被直接过滤掉。
+      // 症状正是「订阅成功挂上（attach.log: OK）却一次都没被调用」。
       ctx.on('llm/stream', (options, next) => wrapStream(options, next, (record) => {
         appendRecord(this.ledgerDir, record);
-      }));
+      }), { global: true });
+      this._attached = true;
+      note('OK: subscribed llm/stream (global)');
     } catch (error) {
+      note(`FAIL: ${error?.message ?? error}`);
       ctxWarn(`订阅 llm/stream 失败：${error?.message ?? error}`);
     }
   }

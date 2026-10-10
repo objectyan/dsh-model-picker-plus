@@ -133,6 +133,31 @@ console.log('\n== 注册契约：加载器能真正实例化 ==');
   }
 }
 
+console.log('\n== 订阅必须跨 fiber 作用域（global） ==');
+{
+  // cordis 的 dispatch 按 fiber 作用域过滤监听器：
+  //   hooks.filter(hook => hook.global || !filter || filter.call(thisArg, hook.ctx))
+  // llm/stream 从 LlmRuntime waterfall 出来，触发者与本插件的 fiber 不同作用域，
+  // 不加 global:true 就会被过滤掉——症状正是「attach.log 报 OK 却一次都没被调用」。
+  const dir = mkdtempSync(join(tmpdir(), 'mp-global-'));
+  try {
+    const regs = [];
+    const ctx = {
+      get: () => undefined,
+      logger: { warn: () => {} },
+      on: (ev, cb, opts) => { regs.push({ ev, cb, opts }); },
+    };
+    const { default: ServiceClass } = await import('../index.js');
+    new ServiceClass(ctx);
+    const sub = regs.find(r => r.ev === 'llm/stream');
+    check('注册了 llm/stream 监听器', sub !== undefined);
+    check('监听器带 global: true（跨 fiber 才收得到）', sub?.opts?.global === true,
+      JSON.stringify(sub?.opts));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 console.log('\n== 记账失败不影响调用结果 ==');
 {
   // 账本目录不可写时，调用结果必须照常返回。
