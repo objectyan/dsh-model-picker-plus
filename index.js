@@ -77,6 +77,21 @@ function normalizeUsage(usage) {
   return Object.keys(out).length > 0 ? out : null;
 }
 
+/**
+ * 从一段 chunk 流里取**最后一个** usage（官方 token-meter 的取法）。
+ * 兼容数组与异步迭代器两种形态：会话事件里的 stream 通常已物化。
+ */
+function lastUsageChunk(stream) {
+  if (!stream || typeof stream !== 'object') return null;
+  const list = Array.isArray(stream) ? stream : (Array.isArray(stream.chunks) ? stream.chunks : null);
+  if (!list) return null;
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const chunk = list[i];
+    if (chunk && chunk.type === 'usage' && chunk.usage) return chunk.usage;
+  }
+  return null;
+}
+
 /** finish chunk 的 reason → 精简状态。 */
 function normalizeFinish(reason) {
   const kind = reason && typeof reason === 'object' && typeof reason.kind === 'string' ? reason.kind : 'unknown';
@@ -296,28 +311,79 @@ export class ModelPickerUsage {
       return;
     }
     try {
-      // `global: true` 是关键，不加就永远收不到：
-      // cordis 的 dispatch 会按 fiber 作用域过滤监听器 ——
-      //   const filter = thisArg?.[Context.filter];
-      //   hooks.filter(hook => hook.global || !filter || filter.call(thisArg, hook.ctx))
-      // 而 llm/stream 是从 **LlmRuntime 实例**上 waterfall 出来的
-      // （`ctx.waterfall(this, "llm/stream", options, ...)`），触发者与本插件
-      // 的 fiber 不是同一个作用域，非 global 的监听器会被直接过滤掉。
+      // 两条订阅都挂，因为两条 route 的作用域语义不同：
       //
-      // 第二参数被调到最外层再 log：若这里都不出现，说明监听器**根本没被
-      // 派发到**（订阅无效）；出现了但账本空，才是记账环节的问题。
+      // 1) llm/stream —— 每次模型调用的 waterfall，带 options.provider/model
+      //    和最完整的 usage。它是 `ctx.waterfall(this, 'llm/stream', ...)`
+      //    触发的，receiver 是 LlmRuntime 实例。
+      // 2) session/event —— 会话事件流（官方 token-meter 走这条）。
+      //    receiver 是 scopeTarget(session, ...) 生成的 carrier，其
+      //    [Context.filter] 会沿 scope 链筛选：插件 fiber 不在链上就收不到。
+      //
+      // 共同点：都必须 `global: true`。cordis 的 dispatch 是
+      //   hooks.filter(hook => hook.global || !filter || filter.call(thisArg, hook.ctx))
+      // —— global 的检查在 filter **之前**，所以只有它能跨作用域。
+      // 实测：不加 global 时 attach.log 停在 "OK: subscribed" 且永无 EVT。
       ctx.on('llm/stream', (options, next) => {
-        note(`EVT ${new Date().toISOString()} provider=${options?.provider} model=${options?.model}`);
+        note(`EVT-llm ${new Date().toISOString()} provider=${options?.provider} model=${options?.model}`);
         return wrapStream(options, next, (record) => {
           appendRecord(this.ledgerDir, record);
         });
       }, { global: true });
-      this._attached = true;
       note('OK: subscribed llm/stream (global)');
+
+      // 落盘兜底：llm/stream 若因宿主版本差异收不到，这里仍能从会话事件
+      // 里把 usage 捞出来（官方 token-meter 就是这么读的，因而更稳）。
+      ctx.on('session/event', (session, event) => {
+        try {
+          this._observeSessionEvent(session, event);
+        } catch { /* 观测失败绝不影响会话 */ }
+      }, { global: true });
+      note('OK: subscribed session/event (global)');
+
+      this._attached = true;
     } catch (error) {
       note(`FAIL: ${error?.message ?? error}`);
       ctxWarn(`订阅 llm/stream 失败：${error?.message ?? error}`);
     }
+  }
+
+  /**
+   * 从会话事件里捞一次调用的 usage。
+   *
+   * 官方 token-meter 的取法（usage-projection.js）：
+   *   - `assistant/message` 且 data.usage 存在 → 直接用它；
+   *   - 否则看 data.stream 里**最后一个 usage chunk**。
+   * provider/model 来自 assistant 消息自身的 source（messageRoute）。
+   * 这样即使 llm/stream 收不到，账本依然能记上。
+   */
+  _observeSessionEvent(session, event) {
+    const type = event?.type;
+    const data = event?.data;
+    if (type !== 'assistant/message' && type !== 'assistant/attempt') return;
+
+    const usage = data?.usage ?? lastUsageChunk(data?.stream);
+    if (!usage) return;
+
+    const route = data?.message?.source ?? data?.source ?? {};
+    const provider = String(route.provider ?? '');
+    const model = String(route.model ?? '');
+    if (provider === '' && model === '') return; // 没归属信息就不记，避免脏数据
+
+    const sessionId = session?.id ?? session?.sessionId ?? session?.header?.id;
+    appendRecord(this.ledgerDir, {
+      provider,
+      model,
+      sessionId: sessionId === undefined ? undefined : String(sessionId),
+      purpose: data?.purpose,
+      startedAt: Date.now(),
+      endedAt: Date.now(),
+      durationMs: 0, // 事件路径拿不到请求起始时刻，耗时留 0 而不是编一个
+      ...normalizeUsage(usage),
+      finishKind: String(data?.finishReason?.kind ?? 'unknown'),
+      ok: true,
+      source: 'session/event',
+    });
   }
 
   /** 读账本并聚合；client 通过 RPC 调用它来渲染用量徽章与排序。 */

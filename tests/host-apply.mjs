@@ -19,9 +19,9 @@ function makeCtx({ dataDir, withOn = true, withProvide = true, onThrows = false 
     logger: { warn: () => {} },
   };
   if (withOn) {
-    ctx.on = (event, handler) => {
+    ctx.on = (event, handler, opts) => {
       if (onThrows) throw new Error('on unsupported');
-      subscriptions.push({ event, handler });
+      subscriptions.push({ event, handler, opts });
     };
   }
   if (withProvide) {
@@ -37,8 +37,14 @@ console.log('== apply：正常路径 ==');
     const { ctx, subscriptions } = makeCtx({ dataDir: dir });
     const service = apply(ctx);
 
-    check('订阅了 llm/stream', subscriptions.length === 1 && subscriptions[0].event === 'llm/stream',
+    // 两条 route 都订阅：llm/stream（完整 usage）+ session/event（官方兜底路径）。
+    // 都必须是 global —— 两个 receiver 的作用域与插件 fiber 不同，不加就收不到。
+    check('订阅了 llm/stream 与 session/event',
+      subscriptions.map(s => s.event).join(',') === 'llm/stream,session/event',
       subscriptions.map(s => s.event).join(','));
+    check('两条订阅都带 global: true',
+      subscriptions.every(s => s.opts?.global === true),
+      JSON.stringify(subscriptions.map(s => s.opts)));
     // 服务实例是暴露给 client 的唯一入口（取代旧的 ctx.provide）。
     check('apply 返回带汇总接口的服务实例', typeof service?.summarize === 'function'
       && typeof service?.recent === 'function');
@@ -95,7 +101,8 @@ console.log('\n== apply：缺能力时静默降级 ==');
     const noProvide = makeCtx({ dataDir: dir, withProvide: false });
     threw = null;
     try { apply(noProvide.ctx); } catch (e) { threw = e; }
-    check('缺少 ctx.provide 时不抛错且仍订阅', threw === null && noProvide.subscriptions.length === 1);
+    check('缺少 ctx.provide 时不抛错且仍订阅', threw === null && noProvide.subscriptions.length === 2,
+      `n=${noProvide.subscriptions.length}`);
 
     // storage 缺席：退回 home 目录仍能拿到路径（不抛错即可）
     threw = null;
