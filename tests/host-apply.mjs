@@ -38,17 +38,16 @@ console.log('== apply：正常路径 ==');
     const service = apply(ctx);
 
     // 两条 route 都订阅：llm/stream（完整 usage）+ session/event（官方兜底路径）。
-    // 都必须是 global —— 两个 receiver 的作用域与插件 fiber 不同，不加就收不到。
+    // 真实宿主 context 上不需要 global —— 官方 antigravity 同样直接 ctx.on。
     check('订阅了 llm/stream 与 session/event',
       subscriptions.map(s => s.event).join(',') === 'llm/stream,session/event',
       subscriptions.map(s => s.event).join(','));
-    check('两条订阅都带 global: true',
-      subscriptions.every(s => s.opts?.global === true),
+    check('订阅不带 global（真实 context 上不需要）',
+      subscriptions.every(s => s.opts === undefined),
       JSON.stringify(subscriptions.map(s => s.opts)));
-    // 服务实例是暴露给 client 的唯一入口（取代旧的 ctx.provide）。
-    check('apply 返回带汇总接口的服务实例', typeof service?.summarize === 'function'
+    // apply 的返回值是暴露给 client 的汇总入口。
+    check('apply 返回带汇总接口的对象', typeof service?.summarize === 'function'
       && typeof service?.recent === 'function');
-    check('服务实例挂到 ctx 供 client 取件', ctx.modelPickerUsage === service);
     check('暴露的账本路径可定位', typeof service.ledgerPath === 'string' && service.ledgerPath.endsWith('llm-usage.jsonl'),
       service.ledgerPath);
 
@@ -113,40 +112,24 @@ console.log('\n== apply：缺能力时静默降级 ==');
   }
 }
 
-console.log('\n== 注册契约：加载器能真正实例化 ==');
+console.log('\n== 注册契约：与官方 host 插件同形 ==');
 {
-  const { default: ServiceClass } = await import('../index.js');
-  // cordis 的 registry.resolve() 只收「函数 / 带 apply 的对象」，
-  // 然后 execute() 走 `new callback(ctx, config)`。三者必须同时成立。
-  check('default 导出是构造函数', typeof ServiceClass === 'function');
-  check('带静态 inject 元数据', typeof ServiceClass?.inject === 'object'
-    && Array.isArray(ServiceClass.inject.optional));
-  const dir = mkdtempSync(join(tmpdir(), 'mp-ctor-'));
-  try {
-    let instance = null;
-    let threw = null;
-    try { instance = new ServiceClass(makeCtx({ dataDir: dir }).ctx); } catch (error) { threw = error; }
-    check('可被 new 实例化（加载器做的事）', threw === null && instance !== null,
-      threw ? String(threw.message ?? threw) : '');
-    check('实例暴露 summarize/recent', typeof instance?.summarize === 'function'
-      && typeof instance?.recent === 'function');
-    // 回归守卫：曾因拿不到 cordis 的 Service 基类而静默退化成普通类——
-    // 类能 new，但缺 fiber/ctx 注入，构造函数里的订阅挂不上。
-    check('账本目录已解析（基类可用的旁证）',
-      typeof instance?.ledgerDir === 'string' && instance.ledgerDir.length > 0,
-      instance?.ledgerDir);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  const mod = await import('../index.js');
+  // 官方能工作的 host 插件（dsh-tool-antigravity）就是这个形状：
+  //   const name / const inject / export function apply(ctx, config)
+  // 加载器把它当普通函数插件调用，apply 拿到的是**真实宿主 context**。
+  check('导出 apply 函数', typeof mod.apply === 'function');
+  check('导出 name 字符串', typeof mod.name === 'string' && mod.name.length > 0, mod.name);
+  check('导出 inject 声明', mod.inject !== undefined, JSON.stringify(mod.inject));
+  // 回归守卫：曾误改成 Service 子类 / 工厂函数 / default class —— 那些形态下
+  // 加载器给的 ctx 是残的（inject/effect undefined、服务全取不到）。
+  check('不导出 default（避免加载器误取）', mod.default === undefined,
+    typeof mod.default);
 }
 
-console.log('\n== 订阅必须跨 fiber 作用域（global） ==');
+console.log('\n== apply 在真实 ctx 上订阅两条 route ==');
 {
-  // cordis 的 dispatch 按 fiber 作用域过滤监听器：
-  //   hooks.filter(hook => hook.global || !filter || filter.call(thisArg, hook.ctx))
-  // llm/stream 从 LlmRuntime waterfall 出来，触发者与本插件的 fiber 不同作用域，
-  // 不加 global:true 就会被过滤掉——症状正是「attach.log 报 OK 却一次都没被调用」。
-  const dir = mkdtempSync(join(tmpdir(), 'mp-global-'));
+  const dir = mkdtempSync(join(tmpdir(), 'mp-shape-'));
   try {
     const regs = [];
     const ctx = {
@@ -154,12 +137,13 @@ console.log('\n== 订阅必须跨 fiber 作用域（global） ==');
       logger: { warn: () => {} },
       on: (ev, cb, opts) => { regs.push({ ev, cb, opts }); },
     };
-    const { default: ServiceClass } = await import('../index.js');
-    new ServiceClass(ctx);
-    const sub = regs.find(r => r.ev === 'llm/stream');
-    check('注册了 llm/stream 监听器', sub !== undefined);
-    check('监听器带 global: true（跨 fiber 才收得到）', sub?.opts?.global === true,
-      JSON.stringify(sub?.opts));
+    const mod = await import('../index.js');
+    mod.apply(ctx);
+    check('注册了 llm/stream 监听器', regs.some(r => r.ev === 'llm/stream'));
+    check('注册了 session/event 监听器', regs.some(r => r.ev === 'session/event'));
+    // 真实 context 上无需 global —— 官方 antigravity 也直接 ctx.on。
+    check('订阅不带 global 选项', regs.every(r => r.opts === undefined),
+      JSON.stringify(regs.map(r => r.opts)));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

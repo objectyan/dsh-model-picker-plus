@@ -256,207 +256,85 @@ const INIT_HOOKS = Symbol.for('cordis.initHooks');
 /**
  * Host 侧服务：订阅 llm/stream，把每次模型调用落成一条 JSONL 明细。
  *
- * 注册形态（三次踩坑后的定论，见文件头）：
- *   · `default` 导出**类本身** —— 加载器做 `exports.default ?? exports` 后
- *     直接 `new callback(ctx, config)`，导出工厂函数会拿到函数而非类；
- *   · 挂订阅用 cordis 的 **initHooks**（`Symbol.for('cordis.initHooks')`），
- *     而不是构造函数。cordis 在 `new` 之后才跑 hooks，那时 fiber 已就绪；
- *     官方 token-meter 能在构造函数里直接 `ctx.on`，是因为它继承的是真
- *     `Service`（能 `super(ctx, name)` 自我注册）。
+ * 注册形态（最终定论，参照官方能工作的 host 插件 dsh-tool-antigravity）：
+ *   `const name` + `const inject = [...]` + `export function apply(ctx, config)`
+ *   —— 就是最朴素的那一种。apply 里的 ctx 是**真实的宿主 context**，
+ *   可以直接 `ctx.get('服务')` / `ctx.on('事件')`，不需要任何技巧。
  *
- * 为什么不继承 cordis Service：`@deepseek-ai/cordis` 只存在于 app.asar 内部，
- * 不在 profile 的 node_modules（实测 createRequire 也解析不到），所以插件里
- * 拿不到真基类——早先几版因此静默退化，类能 new 但订阅挂不上。
- * initHooks 不需要基类，只依赖一个全局 Symbol，是这里唯一可靠的挂载点。
+ * 踩过的坑（别重犯）：
+ *   1. 曾以为要 `class extends Service` —— 但 @deepseek-ai/cordis 只在
+ *      app.asar 内部，插件根本拿不到那个基类，退化成普通类后 ctx 是残的；
+ *   2. 曾用 `Symbol.for('cordis.initHooks')` 挂载 —— 同样是拿不到真 context
+ *      的补救，实测该 context 里 inject/effect 皆 undefined、所有服务取不到；
+ *   3. `export default class` / 工厂函数也都不对。
+ *   真正的答案一直是最简单的那种：普通 apply 函数 + 顶层 inject 数组。
  */
-export class ModelPickerUsage {
-  // storage 用来挑数据目录；缺失也能工作（退回 ~/.dsh），所以走 optional。
-  static inject = { optional: ['storage'] };
+export const name = 'model-picker-plus';
+// storage 用来挑数据目录；缺失也能工作（退回 ~/.dsh），所以走 optional。
+export const inject = { optional: ['storage'] };
 
-  constructor(ctx, _config = {}) {
-    this.ctx = ctx;
-    this.ledgerDir = resolveDataDir(ctx);
-    this.ledgerPath = this.ledgerDir ? join(this.ledgerDir, LEDGER_FILE) : null;
-    try { warnFn = typeof ctx?.logger?.warn === 'function' ? ctx.logger.warn.bind(ctx.logger) : null; } catch { warnFn = null; }
-
-    // 诊断：构造函数是否真的被调用过。这是整条链路的分水岭——
-    // 没有这一行就分不清「插件没加载」与「加载了但订阅没挂上」。
-    try {
-      mkdirSync(this.ledgerDir, { recursive: true });
-      appendFileSync(join(this.ledgerDir, 'attach.log'), `CTOR ${new Date().toISOString()}\n`, 'utf8');
-    } catch { /* 诊断写不了就算了 */ }
-
-    // 在 cordis 的 init 阶段挂订阅（而不是构造函数里）：那时 fiber 已就绪，
-    // ctx.on 才真正注册到活着的上下文上。
-    const hooks = (this[INIT_HOOKS] ??= []);
-    hooks.push(() => this._attach());
-    // 兜底：若某个 cordis 版本不跑 initHooks（例如我们直接被 new 出来），
-    // 构造末尾立即挂一次。重复订阅由 _attached 标志挡住。
-    this._attach();
-  }
-
-  _attach() {
-    if (this._attached) return;
-    const ctx = this.ctx;
-    const note = (line) => {
-      try {
-        const dir = this.ledgerDir ?? join(homedir(), '.dsh', 'dsh-model-picker-plus');
-        mkdirSync(dir, { recursive: true });
-        appendFileSync(join(dir, 'attach.log'), `${line}\n`, 'utf8');
-      } catch { /* 诊断写不了就算了 */ }
-    };
-    note(`ctor ${new Date().toISOString()} ctx=${ctx ? 'yes' : 'no'} on=${typeof ctx?.on}`);
-    if (!ctx || typeof ctx.on !== 'function') {
-      note('SKIP: ctx.on unavailable');
-      return;
-    }
-    // 把 ctx 的能力面摊开记录一次：这能区分「服务不在位」与「服务在位但事件不到」。
-    try {
-      const shape = [];
-      shape.push(`get=${typeof ctx.get}`);
-      shape.push(`on=${typeof ctx.on}`);
-      shape.push(`inject=${typeof ctx.inject}`);
-      shape.push(`effect=${typeof ctx.effect}`);
-      shape.push(`setTimeout=${typeof setTimeout}`);
-      // 服务取件：ctx.get 不在时，很多宿主改用 ctx.xxx 属性直取，两条都试。
-      const keys = [];
-      for (const name of ['llm', 'sessions', 'storage']) {
-        let viaGet = 'n/a';
-        let viaProp = 'n/a';
-        try { viaGet = typeof ctx.get === 'function' ? (ctx.get(name) === undefined ? 'undef' : 'hit') : 'n/a'; } catch (e) { viaGet = `err:${e?.message ?? e}`; }
-        try { viaProp = ctx[name] === undefined ? 'undef' : 'hit'; } catch (e) { viaProp = `err:${e?.message ?? e}`; }
-        keys.push(`${name}(get=${viaGet},prop=${viaProp})`);
-      }
-      note(`ctx ${shape.join(' ')}`);
-      note(`services ${keys.join(' ')}`);
-    } catch (error) {
-      note(`diag-err ${error?.message ?? error}`);
-    }
-    try {
-      // 两条订阅都挂，因为两条 route 的作用域语义不同：
-      //
-      // 1) llm/stream —— 每次模型调用的 waterfall，带 options.provider/model
-      //    和最完整的 usage。它是 `ctx.waterfall(this, 'llm/stream', ...)`
-      //    触发的，receiver 是 LlmRuntime 实例。
-      // 2) session/event —— 会话事件流（官方 token-meter 走这条）。
-      //    receiver 是 scopeTarget(session, ...) 生成的 carrier，其
-      //    [Context.filter] 会沿 scope 链筛选：插件 fiber 不在链上就收不到。
-      //
-      // 共同点：都必须 `global: true`。cordis 的 dispatch 是
-      //   hooks.filter(hook => hook.global || !filter || filter.call(thisArg, hook.ctx))
-      // —— global 的检查在 filter **之前**，所以只有它能跨作用域。
-      // 实测：不加 global 时 attach.log 停在 "OK: subscribed" 且永无 EVT。
-      ctx.on('llm/stream', (options, next) => {
-        note(`EVT-llm ${new Date().toISOString()} provider=${options?.provider} model=${options?.model}`);
-        return wrapStream(options, next, (record) => {
-          appendRecord(this.ledgerDir, record);
-        });
-      }, { global: true });
-      note('OK: subscribed llm/stream (global)');
-
-      // 落盘兜底：llm/stream 若因宿主版本差异收不到，这里仍能从会话事件
-      // 里把 usage 捞出来（官方 token-meter 就是这么读的，因而更稳）。
-      ctx.on('session/event', (session, event) => {
-        try {
-          this._observeSessionEvent(session, event);
-        } catch { /* 观测失败绝不影响会话 */ }
-      }, { global: true });
-      note('OK: subscribed session/event (global)');
-
-      // ── 主动轮询探针 ──────────────────────────────────────────
-      //
-      // 事件订阅是「被动等待」：收不到时无法分辨是「根本没发生」还是
-      // 「发生了但被作用域过滤掉」。这个定时器主动去问宿主，把两者分开：
-      //   · 探到 sessions/llm 服务在位 → 说明服务可达
-      //   · 探到某个会话的 tokenUsage 有增长 → 说明调用**确实发生过**，
-      //     那么事件收不到就是作用域问题（而非静默无事）
-      // 立刻打一次（不等 30 秒）——上次只记了 "started" 却没有任何周期行，
-      // 分不清是定时器没跑还是进程提前退出，所以先同步记一条。
-      const probeOnce = (tag) => {
-        try {
-          const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : undefined;
-          let count = 'n/a';
-          try { count = String((sessions?.list?.() ?? []).length); } catch (e) { count = `err:${e?.message ?? e}`; }
-          note(`PROBE-${tag} ${new Date().toISOString()} sessions=${count}`);
-        } catch (error) {
-          note(`PROBE-${tag}-ERR ${error?.message ?? error}`);
-        }
-      };
-      probeOnce('immediate');
-      this._probeTimer = setInterval(() => probeOnce('tick'), 15000);
-      // unref：不阻止进程退出（否则测试进程永不结束——这是实测踩到的坑）。
-      // 宿主进程本身长期存活，unref 不会让探针失效。
-      this._probeTimer?.unref?.();
-      note('OK: probe timer started (15s, unref)');
-
-      this._attached = true;
-    } catch (error) {
-      note(`FAIL: ${error?.message ?? error}`);
-      ctxWarn(`订阅 llm/stream 失败：${error?.message ?? error}`);
-    }
-  }
-
-  /**
-   * 从会话事件里捞一次调用的 usage。
-   *
-   * 官方 token-meter 的取法（usage-projection.js）：
-   *   - `assistant/message` 且 data.usage 存在 → 直接用它；
-   *   - 否则看 data.stream 里**最后一个 usage chunk**。
-   * provider/model 来自 assistant 消息自身的 source（messageRoute）。
-   * 这样即使 llm/stream 收不到，账本依然能记上。
-   */
-  _observeSessionEvent(session, event) {
-    const type = event?.type;
-    const data = event?.data;
-    if (type !== 'assistant/message' && type !== 'assistant/attempt') return;
-
-    const usage = data?.usage ?? lastUsageChunk(data?.stream);
-    if (!usage) return;
-
-    const route = data?.message?.source ?? data?.source ?? {};
-    const provider = String(route.provider ?? '');
-    const model = String(route.model ?? '');
-    if (provider === '' && model === '') return; // 没归属信息就不记，避免脏数据
-
-    const sessionId = session?.id ?? session?.sessionId ?? session?.header?.id;
-    appendRecord(this.ledgerDir, {
-      provider,
-      model,
-      sessionId: sessionId === undefined ? undefined : String(sessionId),
-      purpose: data?.purpose,
-      startedAt: Date.now(),
-      endedAt: Date.now(),
-      durationMs: 0, // 事件路径拿不到请求起始时刻，耗时留 0 而不是编一个
-      ...normalizeUsage(usage),
-      finishKind: String(data?.finishReason?.kind ?? 'unknown'),
-      ok: true,
-      source: 'session/event',
-    });
-  }
-
-  /** 读账本并聚合；client 通过 RPC 调用它来渲染用量徽章与排序。 */
-  summarize() {
-    return buildUsageIndex(readLedger(this.ledgerDir));
-  }
-
-  /** 最近 N 条明细，用于诊断。 */
-  recent(limit = 200) {
-    return readLedger(this.ledgerDir).slice(-Math.max(1, Math.min(5000, limit)));
-  }
+/** Debug diagnostics are written here so a failed mount is never silent. */
+function noteTo(dir, line) {
+  try {
+    const target = dir ?? join(homedir(), '.dsh', 'dsh-model-picker-plus');
+    mkdirSync(target, { recursive: true });
+    appendFileSync(join(target, 'attach.log'), `${line}\n`, 'utf8');
+  } catch { /* 诊断写不了就算了 */ }
 }
 
 /**
- * 加载器读的是 `exports.default ?? exports`，所以 default 必须是类本身。
- * （导出工厂函数会让加载器拿到「造类的函数」，服务永远建不起来。）
+ * Mount the host-side usage ledger.
+ *
+ * @param ctx - the real host context (services reachable via ctx.get).
  */
-export default ModelPickerUsage;
+export function apply(ctx, _config = {}) {
+  const ledgerDir = resolveDataDir(ctx);
+  try { warnFn = typeof ctx?.logger?.warn === 'function' ? ctx.logger.warn.bind(ctx.logger) : null; } catch { warnFn = null; }
 
-/** 兼容旧形态：部分加载路径仍会调用 apply(ctx)。 */
-export function apply(ctx) {
-  const service = new ModelPickerUsage(ctx);
-  // 旧路径没有 Service 的取件机制，直接把实例挂到 ctx 上供 client 取用。
-  try { ctx.modelPickerUsage = service; } catch { /* ctx 不可写则忽略 */ }
-  return service;
+  noteTo(ledgerDir, `APPLY ${new Date().toISOString()} get=${typeof ctx?.get} on=${typeof ctx?.on} inject=${typeof ctx?.inject}`);
+
+  // 诊断：一次性把 ctx 的能力面记下来，便于区分「服务不在位」与「事件不到」。
+  try {
+    const probe = [];
+    for (const svc of ['llm', 'sessions', 'storage']) {
+      let viaGet = 'n/a';
+      try { viaGet = typeof ctx.get === 'function' ? (ctx.get(svc) === undefined ? 'undef' : 'hit') : 'n/a'; } catch (e) { viaGet = `err:${e?.message ?? e}`; }
+      probe.push(`${svc}=${viaGet}`);
+    }
+    noteTo(ledgerDir, `services ${probe.join(' ')}`);
+  } catch { /* 诊断失败不影响服务 */ }
+
+  const record = (row) => appendRecord(ledgerDir, row);
+
+  // 订阅 waterfall：每次流式调用都经过这里，带 provider/model 与完整 usage。
+  // 真实 context 上无需任何作用域技巧（官方 antigravity 同样直接 ctx.on）。
+  try {
+    ctx.on('llm/stream', (options, next) => {
+      return wrapStream(options, next, record);
+    });
+    noteTo(ledgerDir, 'OK: subscribed llm/stream');
+  } catch (error) {
+    noteTo(ledgerDir, `FAIL llm/stream: ${error?.message ?? error}`);
+  }
+
+  // 兜底：从会话事件里读 usage（官方 token-meter 的取法），
+  // 覆盖 llm/stream 因宿主差异漏掉的情况。
+  try {
+    ctx.on('session/event', (session, event) => {
+      try { observeSessionEvent(session, event, record); } catch { /* 观测失败不影响会话 */ }
+    });
+    noteTo(ledgerDir, 'OK: subscribed session/event');
+  } catch (error) {
+    noteTo(ledgerDir, `FAIL session/event: ${error?.message ?? error}`);
+  }
+
+  // 暴露给 client：读账本并聚合。
+  return {
+    ledgerDir,
+    ledgerPath: ledgerDir ? join(ledgerDir, LEDGER_FILE) : null,
+    summarize: () => buildUsageIndex(readLedger(ledgerDir)),
+    recent: (limit = 200) => readLedger(ledgerDir).slice(-Math.max(1, Math.min(5000, limit))),
+  };
 }
 
 /** 供测试/诊断：读取账本（解析失败的行跳过）。 */
@@ -472,6 +350,47 @@ export function readLedger(dir) {
   } catch {
     return [];
   }
+}
+
+/**
+ * 从会话事件里捞一次调用的 usage（官方 token-meter 的取法）。
+ *
+ *   - `assistant/message` 且 data.usage 存在 → 直接用它；
+ *   - 否则看 data.stream 里**最后一个 usage chunk**。
+ * provider/model 来自 assistant 消息自身的 source（messageRoute）。
+ * 作为 llm/stream 的兜底：那条 waterfall 若因宿主版本差异漏掉，这条仍在。
+ */
+export function observeSessionEvent(session, event, record) {
+  const type = event?.type;
+  const data = event?.data;
+  if (type !== 'assistant/message' && type !== 'assistant/attempt') return null;
+
+  const usage = data?.usage ?? lastUsageChunk(data?.stream);
+  if (!usage) return null;
+
+  const route = data?.message?.source ?? data?.source ?? {};
+  const provider = String(route.provider ?? '');
+  const model = String(route.model ?? '');
+  // 没有归属就不记：宁可少一条，也不往账本里塞无法归因的脏数据。
+  if (provider === '' && model === '') return null;
+
+  const sessionId = session?.id ?? session?.sessionId ?? session?.header?.id;
+  const row = {
+    provider,
+    model,
+    sessionId: sessionId === undefined ? undefined : String(sessionId),
+    purpose: data?.purpose,
+    startedAt: Date.now(),
+    endedAt: Date.now(),
+    // 事件路径拿不到请求起始时刻，耗时留 0 而不是编一个看似合理的数。
+    durationMs: 0,
+    ...(normalizeUsage(usage) ?? {}),
+    finishKind: String(data?.finishReason?.kind ?? 'unknown'),
+    ok: true,
+    source: 'session/event',
+  };
+  record(row);
+  return row;
 }
 
 /** 供测试：把明细聚合为「按 provider/model」的汇总。 */
@@ -491,4 +410,4 @@ export function summarize(records) {
   return out;
 }
 
-export const __test = { normalizeUsage, normalizeFinish, wrapStream, appendRecord, summarize, buildUsageIndex, LEDGER_FILE };
+export const __test = { normalizeUsage, normalizeFinish, wrapStream, appendRecord, summarize, buildUsageIndex, observeSessionEvent, lastUsageChunk, LEDGER_FILE };
