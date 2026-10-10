@@ -310,6 +310,23 @@ export class ModelPickerUsage {
       note('SKIP: ctx.on unavailable');
       return;
     }
+    // 把 ctx 的能力面摊开记录一次：这能区分「服务不在位」与「服务在位但事件不到」。
+    try {
+      const keys = [];
+      for (const name of ['llm', 'sessions', 'sessionProjections', 'storage', 'agents', 'tokenMeter']) {
+        let present = false;
+        let detail = '';
+        try {
+          const svc = typeof ctx.get === 'function' ? ctx.get(name) : undefined;
+          present = svc !== undefined && svc !== null;
+          if (present) detail = `methods=${Object.getOwnPropertyNames(Object.getPrototypeOf(svc) ?? {}).slice(0, 6).join('|')}`;
+        } catch (error) {
+          detail = `err=${error?.message ?? error}`;
+        }
+        keys.push(`${name}:${present ? 'yes' : 'no'}${detail ? `(${detail})` : ''}`);
+      }
+      note(`services ${keys.join(' ')}`);
+    } catch { /* 诊断失败不影响订阅 */ }
     try {
       // 两条订阅都挂，因为两条 route 的作用域语义不同：
       //
@@ -340,6 +357,28 @@ export class ModelPickerUsage {
         } catch { /* 观测失败绝不影响会话 */ }
       }, { global: true });
       note('OK: subscribed session/event (global)');
+
+      // ── 主动轮询探针 ──────────────────────────────────────────
+      //
+      // 事件订阅是「被动等待」：收不到时无法分辨是「根本没发生」还是
+      // 「发生了但被作用域过滤掉」。这个定时器主动去问宿主，把两者分开：
+      //   · 探到 sessions/llm 服务在位 → 说明服务可达
+      //   · 探到某个会话的 tokenUsage 有增长 → 说明调用**确实发生过**，
+      //     那么事件收不到就是作用域问题（而非静默无事）
+      this._probeTimer = setInterval(() => {
+        try {
+          const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : undefined;
+          const ids = [];
+          try {
+            for (const id of sessions?.list?.() ?? []) ids.push(String(id));
+          } catch { /* list 不可用就跳过 */ }
+          note(`PROBE ${new Date().toISOString()} sessions=${ids.length}`);
+        } catch (error) {
+          note(`PROBE-ERR ${error?.message ?? error}`);
+        }
+      }, 30000);
+      this._probeTimer?.unref?.();
+      note('OK: probe timer started (30s)');
 
       this._attached = true;
     } catch (error) {
