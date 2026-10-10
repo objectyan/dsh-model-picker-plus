@@ -16,7 +16,6 @@
 //   追加写的好处：崩溃/断电最多丢最后一行，不会像"整体重写 JSON"那样
 //   把已积累的历史一起写坏。
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -236,63 +235,49 @@ export function buildUsageIndex(records) {
  * 官方 dsh-token-meter 直接 `export default class extends Service`，
  * 是同一套约定。
  */
-/** 测试环境用的退化基类（宿主运行时能拿到真的 cordis Service）。 */
-const FallbackService = class {
-  constructor(context) { this.ctx = context; }
-};
-
-/**
- * 宿主运行时 cordis 的 Service 基类。
- *
- * 为什么必须在运行时解析、而且不能 import：
- *   · 本包的单元测试是裸 node 跑的（没有 DSH 的 node_modules 树），顶层
- *     `import ... from '@deepseek-ai/cordis'` 会让**全部**测试
- *     ERR_MODULE_NOT_FOUND —— 包括与本文件无关的用例；
- *   · 更关键：cordis **不在 profile 的 node_modules 里**（它只存在于
- *     app.asar 内部），所以 createRequire 也解析不到。
- *     第三版曾因此静默退化成 FallbackService——类能 new，但缺了 cordis 的
- *     fiber/ctx 注入机制，构造函数里的 ctx.on(...) 根本没挂上，
- *     症状是「模块加载了（探针有）却一条账都没有」。
- *
- * 现在的取法：Service 基类在 cordis 的运行上下文里是可达的（加载器自己就用
- * ctx.registry），先从 ctx 上找，再退回退化类。
- */
-function resolveServiceBase(ctx) {
-  try {
-    const fromCtx = ctx?.Service
-      ?? ctx?.constructor?.Service
-      ?? ctx?.root?.Service
-      ?? ctx?.reflect?.Service;
-    if (typeof fromCtx === 'function') return fromCtx;
-  } catch { /* 继续退化 */ }
-  try {
-    const req = createRequire(import.meta.url);
-    const mod = req('@deepseek-ai/cordis');
-    if (typeof mod?.Service === 'function') return mod.Service;
-  } catch { /* cordis 不在可达范围（宿主 asar 内的常态） */ }
-  return FallbackService;
-}
+/** cordis 在 `new` 之后读取这个 Symbol 数组来跑初始化钩子。 */
+const INIT_HOOKS = Symbol.for('cordis.initHooks');
 
 /**
  * Host 侧服务：订阅 llm/stream，把每次模型调用落成一条 JSONL 明细。
  *
- * 必须是「Service 子类 + 静态 inject 元数据」，且 default 导出**是类本身**：
- * cordis 的 execute() 走 `new runtime.callback(ctx, config)`，加载器还会先做
- * `exports = exports.default ?? exports`。导出工厂函数 → 拿到函数不是类 →
- * 服务建不起来（见文件头踩坑记录）。
+ * 注册形态（三次踩坑后的定论，见文件头）：
+ *   · `default` 导出**类本身** —— 加载器做 `exports.default ?? exports` 后
+ *     直接 `new callback(ctx, config)`，导出工厂函数会拿到函数而非类；
+ *   · 挂订阅用 cordis 的 **initHooks**（`Symbol.for('cordis.initHooks')`），
+ *     而不是构造函数。cordis 在 `new` 之后才跑 hooks，那时 fiber 已就绪；
+ *     官方 token-meter 能在构造函数里直接 `ctx.on`，是因为它继承的是真
+ *     `Service`（能 `super(ctx, name)` 自我注册）。
+ *
+ * 为什么不继承 cordis Service：`@deepseek-ai/cordis` 只存在于 app.asar 内部，
+ * 不在 profile 的 node_modules（实测 createRequire 也解析不到），所以插件里
+ * 拿不到真基类——早先几版因此静默退化，类能 new 但订阅挂不上。
+ * initHooks 不需要基类，只依赖一个全局 Symbol，是这里唯一可靠的挂载点。
  */
-export class ModelPickerUsage extends resolveServiceBase() {
+export class ModelPickerUsage {
   // storage 用来挑数据目录；缺失也能工作（退回 ~/.dsh），所以走 optional。
   static inject = { optional: ['storage'] };
 
   constructor(ctx, _config = {}) {
-    super(ctx);
+    this.ctx = ctx;
     this.ledgerDir = resolveDataDir(ctx);
     this.ledgerPath = this.ledgerDir ? join(this.ledgerDir, LEDGER_FILE) : null;
     try { warnFn = typeof ctx?.logger?.warn === 'function' ? ctx.logger.warn.bind(ctx.logger) : null; } catch { warnFn = null; }
 
-    // 订阅 waterfall：每次流式调用都会经过这里（含重试/重放/路由）。
-    // 记不上账只影响统计，绝不影响模型调用本身——所以整段包在 try/catch。
+    // 在 cordis 的 init 阶段挂订阅（而不是构造函数里）：那时 fiber 已就绪，
+    // ctx.on 才真正注册到活着的上下文上。
+    const hooks = (this[INIT_HOOKS] ??= []);
+    hooks.push(() => this._attach());
+    // 兜底：若某个 cordis 版本不跑 initHooks（例如我们直接被 new 出来），
+    // 构造末尾立即挂一次。重复订阅由 _attached 标志挡住。
+    this._attach();
+  }
+
+  _attach() {
+    if (this._attached) return;
+    const ctx = this.ctx;
+    if (!ctx || typeof ctx.on !== 'function') return;
+    this._attached = true;
     try {
       ctx.on('llm/stream', (options, next) => wrapStream(options, next, (record) => {
         appendRecord(this.ledgerDir, record);
