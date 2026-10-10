@@ -312,21 +312,26 @@ export class ModelPickerUsage {
     }
     // 把 ctx 的能力面摊开记录一次：这能区分「服务不在位」与「服务在位但事件不到」。
     try {
+      const shape = [];
+      shape.push(`get=${typeof ctx.get}`);
+      shape.push(`on=${typeof ctx.on}`);
+      shape.push(`inject=${typeof ctx.inject}`);
+      shape.push(`effect=${typeof ctx.effect}`);
+      shape.push(`setTimeout=${typeof setTimeout}`);
+      // 服务取件：ctx.get 不在时，很多宿主改用 ctx.xxx 属性直取，两条都试。
       const keys = [];
-      for (const name of ['llm', 'sessions', 'sessionProjections', 'storage', 'agents', 'tokenMeter']) {
-        let present = false;
-        let detail = '';
-        try {
-          const svc = typeof ctx.get === 'function' ? ctx.get(name) : undefined;
-          present = svc !== undefined && svc !== null;
-          if (present) detail = `methods=${Object.getOwnPropertyNames(Object.getPrototypeOf(svc) ?? {}).slice(0, 6).join('|')}`;
-        } catch (error) {
-          detail = `err=${error?.message ?? error}`;
-        }
-        keys.push(`${name}:${present ? 'yes' : 'no'}${detail ? `(${detail})` : ''}`);
+      for (const name of ['llm', 'sessions', 'storage']) {
+        let viaGet = 'n/a';
+        let viaProp = 'n/a';
+        try { viaGet = typeof ctx.get === 'function' ? (ctx.get(name) === undefined ? 'undef' : 'hit') : 'n/a'; } catch (e) { viaGet = `err:${e?.message ?? e}`; }
+        try { viaProp = ctx[name] === undefined ? 'undef' : 'hit'; } catch (e) { viaProp = `err:${e?.message ?? e}`; }
+        keys.push(`${name}(get=${viaGet},prop=${viaProp})`);
       }
+      note(`ctx ${shape.join(' ')}`);
       note(`services ${keys.join(' ')}`);
-    } catch { /* 诊断失败不影响订阅 */ }
+    } catch (error) {
+      note(`diag-err ${error?.message ?? error}`);
+    }
     try {
       // 两条订阅都挂，因为两条 route 的作用域语义不同：
       //
@@ -365,20 +370,24 @@ export class ModelPickerUsage {
       //   · 探到 sessions/llm 服务在位 → 说明服务可达
       //   · 探到某个会话的 tokenUsage 有增长 → 说明调用**确实发生过**，
       //     那么事件收不到就是作用域问题（而非静默无事）
-      this._probeTimer = setInterval(() => {
+      // 立刻打一次（不等 30 秒）——上次只记了 "started" 却没有任何周期行，
+      // 分不清是定时器没跑还是进程提前退出，所以先同步记一条。
+      const probeOnce = (tag) => {
         try {
           const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : undefined;
-          const ids = [];
-          try {
-            for (const id of sessions?.list?.() ?? []) ids.push(String(id));
-          } catch { /* list 不可用就跳过 */ }
-          note(`PROBE ${new Date().toISOString()} sessions=${ids.length}`);
+          let count = 'n/a';
+          try { count = String((sessions?.list?.() ?? []).length); } catch (e) { count = `err:${e?.message ?? e}`; }
+          note(`PROBE-${tag} ${new Date().toISOString()} sessions=${count}`);
         } catch (error) {
-          note(`PROBE-ERR ${error?.message ?? error}`);
+          note(`PROBE-${tag}-ERR ${error?.message ?? error}`);
         }
-      }, 30000);
+      };
+      probeOnce('immediate');
+      this._probeTimer = setInterval(() => probeOnce('tick'), 15000);
+      // unref：不阻止进程退出（否则测试进程永不结束——这是实测踩到的坑）。
+      // 宿主进程本身长期存活，unref 不会让探针失效。
       this._probeTimer?.unref?.();
-      note('OK: probe timer started (30s)');
+      note('OK: probe timer started (15s, unref)');
 
       this._attached = true;
     } catch (error) {
