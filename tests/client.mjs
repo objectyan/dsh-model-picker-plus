@@ -846,9 +846,11 @@ console.log('\n== open menu render ==');
 let effortPanelTree = null;
 let effortPanelError = null;
 try {
+  // state 序号 = useState 调用顺序（0 基）。effortOpen/effortHover/effortPos
+  // 排在全部列表 state 之后；改动组件 state 数量时必须同步这里的序号。
   effortPanelTree = modules.react.__withState(new Map([
-    [16, true], // effortOpen
-    [18, { left: 40, bottom: 60, minWidth: '150px' }], // effortPos
+    [18, true], // effortOpen
+    [20, { left: 40, bottom: 60, minWidth: '150px' }], // effortPos
   ]), () => reg.component({ locked: false, ...share }));
 } catch (error) {
   effortPanelError = error;
@@ -861,7 +863,7 @@ check('open effort panel renders its options', effortPanelJson.includes('"data-e
   && effortPanelJson.includes('"data-effort-option":"high"'));
 check('effort panel is positioned as a fixed overlay', effortPanelJson.includes('"position":"fixed"')
   && effortPanelJson.includes('[model-picker-plus]effortTitle'));
-check('closed effort panel renders nothing', !JSON.stringify(modules.react.__withState(new Map([[16, false]]), () => reg.component({ locked: false, ...share }))).includes('"data-effort-panel":"true"'));
+check('closed effort panel renders nothing', !JSON.stringify(modules.react.__withState(new Map([[18, false]]), () => reg.component({ locked: false, ...share }))).includes('"data-effort-panel":"true"'));
 let menuTree = null;
 let menuError = null;
 try {
@@ -1091,6 +1093,84 @@ check('switchable-effort rows drop the redundant reasoning pill', (() => {
     JSON.stringify(withState).includes('DeepSeek-V4-Pro'));
 }
 check('vendor tab label carries a model count pill', menuJson.includes('"data-count":2'));
+
+console.log('\n== 用量展示与排序 ==');
+{
+  const { formatTokens, formatDuration, usageForRow, sortRowsByUsage, usageBadge } = plugin.__test;
+
+  check('formatTokens 紧凑化', formatTokens(999) === '999'
+    && formatTokens(1234) === '1.2K'
+    && formatTokens(12345) === '12K'
+    && formatTokens(1234567) === '1.2M'
+    && formatTokens(299138595) === '299.1M');
+  check('formatTokens 对空/非法值返回空串',
+    formatTokens(0) === '' && formatTokens(undefined) === '' && formatTokens(NaN) === '');
+
+  check('formatDuration 紧凑化', formatDuration(820) === '820ms'
+    && formatDuration(1500) === '1.5s'
+    && formatDuration(65000) === '1.1m'
+    && formatDuration(7_200_000) === '2.0h');
+  check('formatDuration 对空/非法值返回空串',
+    formatDuration(0) === '' && formatDuration(null) === '' && formatDuration(-1) === '');
+
+  const usageIndex = {
+    'deepseek/deepseek-v4-pro': { calls: 12, okCalls: 11, tokens: 1_500_000, durationMs: 30_000, failedCalls: 1 },
+    'deepseek/deepseek-v4-flash': { calls: 3, okCalls: 3, tokens: 200_000, durationMs: 5_000, failedCalls: 0 },
+    'zen/minimax': { calls: 40, okCalls: 40, tokens: 100, durationMs: 900_000, failedCalls: 0 },
+  };
+  const rows = [
+    { group: { id: 'deepseek' }, model: { id: 'deepseek-v4-pro' } },
+    { group: { id: 'deepseek' }, model: { id: 'deepseek-v4-flash' } },
+    { group: { id: 'zen' }, model: { id: 'minimax' } },
+    { group: { id: 'other' }, model: { id: 'never-used' } },
+  ];
+  const ids = (list) => list.map(r => r.model.id).join(',');
+
+  check('usageForRow 按 provider/model 命中',
+    usageForRow(usageIndex, { id: 'deepseek' }, { id: 'deepseek-v4-pro' })?.calls === 12
+    && usageForRow(usageIndex, { id: 'nope' }, { id: 'x' }) === null);
+  check('按调用次数排序', ids(sortRowsByUsage(rows, usageIndex, 'usageCalls')) === 'minimax,deepseek-v4-pro,deepseek-v4-flash,never-used');
+  check('按 token 量排序', ids(sortRowsByUsage(rows, usageIndex, 'usageTokens')) === 'deepseek-v4-pro,deepseek-v4-flash,minimax,never-used');
+  check('按耗时排序', ids(sortRowsByUsage(rows, usageIndex, 'usageTime')) === 'minimax,deepseek-v4-pro,deepseek-v4-flash,never-used');
+  // 无记录的行必须沉底且保持原相对顺序（稳定排序）。
+  check('无用量行沉底且保持原顺序', (() => {
+    const noUsage = [
+      { group: { id: 'a' }, model: { id: 'm1' } },
+      { group: { id: 'b' }, model: { id: 'm2' } },
+      { group: { id: 'deepseek' }, model: { id: 'deepseek-v4-pro' } },
+    ];
+    return ids(sortRowsByUsage(noUsage, usageIndex, 'usageCalls')) === 'deepseek-v4-pro,m1,m2';
+  })());
+  check('非法排序维度原样返回', sortRowsByUsage(rows, usageIndex, 'nonsense').length === 4
+    && sortRowsByUsage(rows, usageIndex, undefined)[0].model.id === 'deepseek-v4-pro');
+  check('无任何用量记录时不重排', (() => {
+    const out = sortRowsByUsage(rows, {}, 'usageCalls');
+    return ids(out) === 'deepseek-v4-pro,deepseek-v4-flash,minimax,never-used';
+  })());
+
+  const t = (key) => `[${key}]`;
+  check('usageBadge 有记录才显示', usageBadge(usageIndex, { id: 'deepseek' }, { id: 'deepseek-v4-pro' }, t)?.calls === 12
+    && usageBadge(usageIndex, { id: 'other' }, { id: 'never-used' }, t) === null);
+  check('usageBadge 只用过一次且无 token 时不显示', (() => {
+    const thin = { 'p/m': { calls: 1, tokens: 0, durationMs: 10 } };
+    return usageBadge(thin, { id: 'p' }, { id: 'm' }, t) === null;
+  })());
+  check('usageBadge 提供格式化后的展示字段', (() => {
+    const badge = usageBadge(usageIndex, { id: 'deepseek' }, { id: 'deepseek-v4-pro' }, t);
+    return badge.tokensLabel === '1.5M' && badge.durationLabel === '30.0s'
+      && badge.failedCalls === 1 && badge.okCalls === 11;
+  })());
+  // 用量徽章必须真正渲染进行内（否则界面上看不到任何用量）。
+  const usagePill = JSON.stringify(plugin.__test.UsagePill({
+    badge: { calls: 12, okCalls: 11, failedCalls: 1, tokens: 1_500_000, tokensLabel: '1.5M', durationMs: 30_000, durationLabel: '30.0s' },
+    t,
+  }));
+  check('用量徽章渲染进行内', usagePill.includes('"data-usage":"true"')
+    && usagePill.includes('usageCallsUnit') && usagePill.includes('1.5M'));
+  check('用量徽章与能力胶囊视觉区分（不占用能力色）',
+    !usagePill.includes('CapIcon') && !usagePill.includes('data-cap'));
+  check('用量徽章无数据时不渲染', JSON.stringify(plugin.__test.UsagePill({ badge: null, t })) === 'null');
+}
 check('filter chips render svg icons', menuJson.includes('"viewBox":"0 0 16 16"'));
 check('menu exposes an explicit close action', menuJson.includes('[model-picker-plus]close'));
 check('current card exposes change-model action', menuJson.includes('[model-picker-plus]changeModel'));

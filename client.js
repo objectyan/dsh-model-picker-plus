@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.5.0';
+    const VERSION = '0.6.0-alpha.1';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -114,6 +114,18 @@ window.__ModuleLoader__.load({
         addFavorite: '添加收藏',
         removeFavorite: '取消收藏',
         recent: '最近使用',
+        // ── 用量账本（host 侧 llm/stream 逐请求记账，client 只读展示） ──
+        usageCallsUnit: '次调用',
+        usageOkUnit: '成功',
+        usageFailedUnit: '失败',
+        usageTokensUnit: 'token',
+        usageTimeUnit: '累计耗时',
+        usageSortCalls: '按调用次数',
+        usageSortTokens: '按 token 量',
+        usageSortTime: '按耗时',
+        usageSortLabel: '排序',
+        usageSortOff: '默认',
+        usageTitle: '调用 {calls} 次 · {tokens} token · 耗时 {duration}',
         providers: '全部来源',
         noResults: '没有匹配的模型',
         retry: '重试',
@@ -184,6 +196,18 @@ window.__ModuleLoader__.load({
         addFavorite: 'Add favorite',
         removeFavorite: 'Remove favorite',
         recent: 'Recent',
+        // Usage ledger (host records every llm/stream call; client only displays).
+        usageCallsUnit: 'calls',
+        usageOkUnit: 'ok',
+        usageFailedUnit: 'failed',
+        usageTokensUnit: 'tokens',
+        usageTimeUnit: 'total time',
+        usageSortCalls: 'By calls',
+        usageSortTokens: 'By tokens',
+        usageSortTime: 'By duration',
+        usageSortLabel: 'Sort',
+        usageSortOff: 'Default',
+        usageTitle: '{calls} calls · {tokens} tokens · {duration}',
         providers: 'All providers',
         noResults: 'No matching models',
         retry: 'Retry',
@@ -595,6 +619,85 @@ window.__ModuleLoader__.load({
       const effort = current?.reasoningEffort ?? reasoning.defaultEffort;
       if (effort === undefined) return t('providerDefault');
       return reasoning.efforts.find(item => item.id === effort)?.name ?? effort;
+    }
+
+    // ── 用量账本（host 侧写入，client 侧只读展示） ──────────────
+    //
+    // host 端（index.js）订阅 `llm/stream`，把每次模型调用落成一条 JSONL 明细。
+    // client 拿不到那条流（platform: web 订阅不了宿主事件），但可以读宿主
+    // 通过共享接口暴露的汇总，用来在列表里显示用量、支持按用量排序。
+    //
+    // 这里只做「汇总 → 展示」的纯计算，不接触文件系统。
+
+    /** 把 token 数格式化成紧凑串（1234 → 1.2K，1234567 → 1.2M）。 */
+    function formatTokens(value) {
+      if (!Number.isFinite(value) || value <= 0) return '';
+      if (value < 1000) return String(Math.round(value));
+      if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}K`;
+      if (value < 1_000_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+      return `${(value / 1_000_000_000).toFixed(2)}B`;
+    }
+
+    /** 把毫秒格式化成紧凑串（820 → 820ms，65000 → 1.1m）。 */
+    function formatDuration(ms) {
+      if (!Number.isFinite(ms) || ms <= 0) return '';
+      if (ms < 1000) return `${Math.round(ms)}ms`;
+      if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+      if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
+      return `${(ms / 3_600_000).toFixed(1)}h`;
+    }
+
+    // 用量排序维度：调用次数 / 总 token / 总耗时。
+    const USAGE_SORTS = ['usageCalls', 'usageTokens', 'usageTime'];
+
+    /** 取某行对应的用量汇总（key 为 `provider/model`）。 */
+    function usageForRow(usageIndex, group, model) {
+      if (!usageIndex || typeof usageIndex !== 'object') return null;
+      return usageIndex[`${group?.id ?? ''}/${model?.id ?? ''}`] ?? null;
+    }
+
+    /**
+     * 按用量排序行列表。
+     * 无用量记录的行排在后面并保持原相对顺序（稳定排序）——
+     * 与厂家标签同样的原则：不因排序让位置抖动。
+     */
+    function sortRowsByUsage(rows, usageIndex, dimension) {
+      const list = Array.isArray(rows) ? rows : [];
+      if (!USAGE_SORTS.includes(dimension)) return list;
+      const field = {
+        usageCalls: 'calls',
+        usageTokens: 'tokens',   // 汇总里由 tokens 字段提供（各 token 之和）
+        usageTime: 'durationMs',
+      }[dimension];
+      const weight = (row) => {
+        const rec = usageForRow(usageIndex, row?.group, row?.model);
+        const value = rec?.[field];
+        return Number.isFinite(value) && value > 0 ? value : 0;
+      };
+      if (list.every(row => weight(row) === 0)) return list;
+      return list
+        .map((row, index) => ({ row, index, weight: weight(row) }))
+        .sort((a, b) => (b.weight - a.weight) || (a.index - b.index))
+        .map(item => item.row);
+    }
+
+    /** 行尾的用量摘要（有记录才显示；只调用过 1 次且无 token 时不显示）。 */
+    function usageBadge(usageIndex, group, model, t) {
+      const rec = usageForRow(usageIndex, group, model);
+      if (!rec || !Number.isFinite(rec.calls) || rec.calls <= 0) return null;
+      const tokens = Number.isFinite(rec.tokens) ? rec.tokens : 0;
+      const durationMs = Number.isFinite(rec.durationMs) ? rec.durationMs : 0;
+      // 只用过一两次、又没有 token 数据时不打扰视觉。
+      if (rec.calls < 2 && tokens === 0) return null;
+      return {
+        calls: rec.calls,
+        okCalls: Number.isFinite(rec.okCalls) ? rec.okCalls : 0,
+        tokens,
+        durationMs,
+        tokensLabel: formatTokens(tokens),
+        durationLabel: formatDuration(durationMs),
+        failedCalls: Number.isFinite(rec.failedCalls) ? rec.failedCalls : 0,
+      };
     }
 
     // ── 厂家标签排序：常用优先 ─────────────────────────────────
@@ -1116,6 +1219,36 @@ window.__ModuleLoader__.load({
       }, cap !== 'omni' ? React.createElement(CapIcon, { name: cap }) : null, label);
     });
 
+    // 用量徽章：把 host 侧账本的统计结果压成一枚中性灰胶囊。
+    //
+    // 为什么用灰而不是彩色：能力胶囊表达的是「模型能做什么」（随模型固定），
+    // 用量表达的是「你用了多少」（随时间变化）。混用同色系会让用户误以为颜色
+    // 也是能力的一部分，所以这里刻意不占用 CAP_TONES 的能力色。
+    const UsagePill = memo(function UsagePill({ badge, t }) {
+      if (!badge) return null;
+      const parts = [];
+      if (badge.calls > 0) parts.push(`${badge.calls} ${t('usageCallsUnit')}`);
+      if (badge.tokensLabel !== '') parts.push(`${badge.tokensLabel} tok`);
+      if (parts.length === 0) return null;
+      const titleParts = [
+        t('usageCallsUnit') + ': ' + badge.calls,
+        badge.okCalls !== undefined ? t('usageOkUnit') + ': ' + badge.okCalls : null,
+        badge.failedCalls > 0 ? t('usageFailedUnit') + ': ' + badge.failedCalls : null,
+        badge.tokensLabel !== '' ? t('usageTokensUnit') + ': ' + badge.tokensLabel : null,
+        badge.durationLabel !== '' ? t('usageTimeUnit') + ': ' + badge.durationLabel : null,
+      ].filter(Boolean);
+      return React.createElement('span', {
+        'data-usage': 'true',
+        title: titleParts.join(' · '),
+        style: {
+          flex: 'none', display: 'inline-flex', alignItems: 'center', gap: '3px', height: '20px',
+          padding: '0 6px', borderRadius: '6px', fontSize: '10px', lineHeight: 1,
+          color: colors.muted, background: tint(colors.muted, 10),
+          fontFamily: 'ui-monospace, Consolas, monospace',
+        },
+      }, parts.join(' · '));
+    });
+
     // 厂家徽章：名称首字母 + 由 provider id 哈希出的稳定色相，
     // 让各来源在列表里一眼可辨（治“整页一个色”）。
     const providerHue = (id) => {
@@ -1257,7 +1390,7 @@ window.__ModuleLoader__.load({
           : letter);
     });
 
-    const ModelRow = memo(function ModelRow({ group, model, current, favoriteKey, favorite, onFavorite, onSelect, showProvider, showProviderBadge, t }) {
+    const ModelRow = memo(function ModelRow({ group, model, current, favoriteKey, favorite, onFavorite, onSelect, showProvider, showProviderBadge, usage, t }) {
       const selected = current?.provider === group.id && current?.model === model.id;
       const distinctName = isDistinctText(model.name, model.id);
       const distinctDescription = isDistinctText(model.description, model.name, model.id);
@@ -1349,6 +1482,8 @@ window.__ModuleLoader__.load({
             ? React.createElement(CapPill, { cap: 'reason', label: t('reasoning') })
             : null,
           hasToolsModel(model) ? React.createElement(CapPill, { cap: 'tools', label: t('tools') }) : null,
+          // 用量徽章放在能力胶囊之后、收藏星之前：视觉顺序「能做什么 → 用了多少 → 收藏」。
+          React.createElement(UsagePill, { badge: usage, t }),
           React.createElement('button', {
             type: 'button',
             title: favorite ? t('removeFavorite') : t('addFavorite'),
@@ -1366,7 +1501,7 @@ window.__ModuleLoader__.load({
       );
     });
 
-    const ModelSection = memo(function ModelSection({ title, rows, current, favoriteSet, toggleFavorite, choose, t }) {
+    const ModelSection = memo(function ModelSection({ title, rows, current, favoriteSet, toggleFavorite, choose, usageIndex, t }) {
       if (rows.length === 0) return null;
       return React.createElement('div', { style: { marginBottom: '10px' } },
         React.createElement('div', { style: { fontSize: '11px', fontWeight: 700, color: colors.muted, margin: '2px 0 5px 2px' } }, title),
@@ -1382,6 +1517,7 @@ window.__ModuleLoader__.load({
             onFavorite: toggleFavorite,
             onSelect: choose,
             showProviderBadge: true,
+            usage: usageBadge(usageIndex, group, model, t),
             t,
           });
         }),
@@ -1445,7 +1581,7 @@ window.__ModuleLoader__.load({
       );
     });
 
-    function ModelPickerPlus({ locked, available, directory, load, select, quickCurrent, sessionReplyState, readReplyState }) {
+    function ModelPickerPlus({ locked, available, directory, load, select, quickCurrent, sessionReplyState, readReplyState, readUsageIndex }) {
       const t = translate;
       const rootRef = useRef(null);
       const triggerRef = useRef(null);
@@ -1470,6 +1606,11 @@ window.__ModuleLoader__.load({
       const [vendorExpanded, setVendorExpanded] = useState(false);
       // 厂家使用频次：把常用的排到前面，避免每次都去末尾翻。
       const [vendorUsage, setVendorUsage] = useState(() => storageGet(VENDOR_USAGE_KEY, {}));
+      // host 账本汇总（provider/model → 用量）。菜单打开时现取一次。
+      // null 表示「拿不到账本」——界面据此不显示用量，而不是显示成 0 次。
+      const [usageIndex, setUsageIndex] = useState(null);
+      // 用量排序维度：null = 不排序（跟目录默认顺序一致）。
+      const [usageSort, setUsageSort] = useState(null);
       // 上一轮观察到的 running 状态，用于识别「true → false」下降沿。
       const prevRunningRef = useRef(null);
       // 标签实测宽度（key → px），测量完成后用于两行装箱。
@@ -1536,6 +1677,26 @@ window.__ModuleLoader__.load({
         const timer = setInterval(() => settleReplyUsageRef.current?.(state), 1000);
         return () => clearInterval(timer);
       }, [open, state]);
+
+      // ── 用量账本：菜单打开时现取一次汇总 ─────────────────────
+      //
+      // 时机与厂家频次结算一致（打开即取）：账本在 host 侧追加，每次打开都
+      // 可能有新的调用被记上。取一次就够——菜单开着也不会有新的 token 产生。
+      //
+      // 取不到就保持 null（界面不显示用量），绝不退化成「0 次」——
+      // 那会让用户以为这个模型真的没用过。
+      useEffect(() => {
+        if (!open) return;
+        if (typeof readUsageIndex !== 'function') return;
+        let cancelled = false;
+        try {
+          const next = readUsageIndex();
+          if (!cancelled) setUsageIndex(next);
+        } catch (error) {
+          if (!cancelled) setUsageIndex(null);
+          mark('usage index read failed', String(error?.message ?? error));
+        }
+      }, [open, readUsageIndex]);
 
       useEffect(() => {
         mark('mount', { available, hasDirectory: Boolean(directory) });
@@ -1612,8 +1773,12 @@ window.__ModuleLoader__.load({
       }, [providerGroup, effectiveViewMode, viewMode, capabilityMode]);
       // 收藏集合：O(1) 判断 + 稳定引用，配合 memo 行组件减少列表重渲染。
       const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
-      const favoriteRowsAll = useMemo(() => rowsForKeys(modelIndex, favorites), [modelIndex, favorites]);
-      const recentRowsAll = useMemo(() => rowsForKeys(modelIndex, recents).filter(({ key }) => !favoriteSet.has(key)), [modelIndex, recents, favoriteSet]);
+      // 最近使用/收藏同样过能力筛选（此前只滤了全部模型/厂家/搜索）。
+      // 选了用量排序维度后再按用量重排——排序是叠加在筛选之上的，
+      // 没有维度（null）或没有账本数据时保持原顺序，绝不重排抖动。
+      const sortByUsage = (list) => sortRowsByUsage(list, usageIndex, usageSort);
+      const favoriteRowsAll = useMemo(() => sortByUsage(rowsForKeys(modelIndex, favorites)), [modelIndex, favorites, usageIndex, usageSort]);
+      const recentRowsAll = useMemo(() => sortByUsage(rowsForKeys(modelIndex, recents).filter(({ key }) => !favoriteSet.has(key))), [modelIndex, recents, favoriteSet, usageIndex, usageSort]);
       // 最近使用/收藏同样过能力筛选（此前只滤了全部模型/厂家/搜索）。
       const favoriteRows = useMemo(() => favoriteRowsAll.filter(row => matchesCapability(row.group, row.model, capabilityMode)), [favoriteRowsAll, capabilityMode]);
       const recentRows = useMemo(() => recentRowsAll.filter(row => matchesCapability(row.group, row.model, capabilityMode)), [recentRowsAll, capabilityMode]);
@@ -2198,6 +2363,30 @@ window.__ModuleLoader__.load({
                 }, React.createElement(CapIcon, { name: icon }), label)),
               )
               : null,
+            // 用量排序：把「按调用次数 / 按 token 量 / 按耗时」放在同一行右侧。
+            // 没有账本数据时整组隐藏——排不出任何差异，点了等于没反应。
+            usageIndex
+              ? React.createElement('div', {
+                style: { display: 'flex', gap: '6px', margin: '0 2px 8px', flexWrap: 'wrap', alignItems: 'center' },
+                'data-usage-sort': 'true',
+              },
+                React.createElement('span', { style: { fontSize: '10.5px', color: colors.muted, marginRight: '2px' } }, t('usageSortLabel')),
+                [[null, t('usageSortOff')], ...USAGE_SORTS.map((dim) => [dim, t(
+                  dim === 'usageCalls' ? 'usageSortCalls' : dim === 'usageTokens' ? 'usageSortTokens' : 'usageSortTime',
+                )])].map(([dim, label]) => React.createElement('button', {
+                  key: dim ?? 'off',
+                  type: 'button',
+                  'aria-pressed': usageSort === dim,
+                  onClick: () => setUsageSort(dim),
+                  style: {
+                    display: 'inline-flex', alignItems: 'center',
+                    padding: '3px 10px', borderRadius: '999px', fontSize: '11px', cursor: 'pointer',
+                    border: `1px solid ${usageSort === dim ? colors.accent : colors.border}`,
+                    background: usageSort === dim ? colors.accent : 'transparent',
+                    color: usageSort === dim ? colors.accentFg : colors.muted,
+                  },
+                }, label)))
+              : null,
             groups.length === 0 && state.status === 'loading'
               ? slowLoad
                 ? React.createElement('div', { style: { margin: '6px 4px', padding: '14px', borderRadius: '10px', border: `1px solid ${colors.border}`, background: 'rgba(245,165,36,.05)' } },
@@ -2226,8 +2415,8 @@ window.__ModuleLoader__.load({
                 : React.createElement('div', { style: { padding: '18px 4px', color: colors.muted, fontSize: '12px' } }, t('noTaskResults')),
               React.createElement('button', { type: 'button', onClick: () => setViewMode('all'), style: { display: 'block', margin: '4px auto 10px', border: 'none', background: 'transparent', color: colors.accent, cursor: 'pointer', fontSize: '11px' } }, `${t('viewAll')} →`),
             ) : null,
-            groups.length > 0 && query.trim() === '' && viewMode === 'recent' ? React.createElement(ModelSection, { title: t('recent'), rows: recentRows, current, favoriteSet, toggleFavorite, choose, t }) : null,
-            groups.length > 0 && query.trim() === '' && viewMode === 'favorites' ? React.createElement(ModelSection, { title: t('favorites'), rows: favoriteRows, current, favoriteSet, toggleFavorite, choose, t }) : null,
+            groups.length > 0 && query.trim() === '' && viewMode === 'recent' ? React.createElement(ModelSection, { title: t('recent'), rows: recentRows, current, favoriteSet, toggleFavorite, choose, usageIndex, t }) : null,
+            groups.length > 0 && query.trim() === '' && viewMode === 'favorites' ? React.createElement(ModelSection, { title: t('favorites'), rows: favoriteRows, current, favoriteSet, toggleFavorite, choose, usageIndex, t }) : null,
             // 「全部来源」标题行：收起/展开只作用于分组视图，跟随内容区
             // （此前挂在全局头部，在厂家 tab 等无分组的视图里是摆设）。
             showProviderGroups ? React.createElement('div', { style: { display: 'flex', alignItems: 'center', margin: '10px 0 5px 2px' } },
@@ -2731,6 +2920,49 @@ window.__ModuleLoader__.load({
                 }
               };
 
+              // ── 用量账本汇总：走 host RPC 读取 ──────────────────────
+              //
+              // 账本写在 host 侧磁盘，浏览器读不到，只能让 host 聚合后回传。
+              // host 侧 index.js 用 ctx.provide('modelPickerUsage') 暴露
+              // summarize()；这里通过同一套 remote 取件（同 modelCatalog 通路）拿它。
+              //
+              // 失败一律返回 null：界面据此完全不显示用量，而不是显示成 0
+              // ——「没数据」和「用了 0 次」是两件不同的事，不能混为一谈。
+              let usageRemote = null;
+              let usageRemoteResolved = false;
+              const resolveUsageRemote = () => {
+                if (usageRemoteResolved) return usageRemote;
+                usageRemoteResolved = true;
+                const candidates = [];
+                try { candidates.push(typeof ctx.get === 'function' ? ctx.get('remote.modelPickerUsage') : undefined); } catch { /* 逐个候选尝试 */ }
+                try { candidates.push(typeof ctx.get === 'function' ? ctx.get('modelPickerUsage') : undefined); } catch { /* 同上 */ }
+                try {
+                  const sessionRemote = sessions?.binding?.(sessionId)?.session?.remote;
+                  if (sessionRemote) candidates.push(sessionRemote?.modelPickerUsage);
+                } catch { /* 同上 */ }
+                for (const candidate of candidates) {
+                  if (candidate && typeof candidate.summarize === 'function') {
+                    usageRemote = candidate;
+                    return usageRemote;
+                  }
+                }
+                return null;
+              };
+              const readUsageIndexInternal = () => {
+                try {
+                  const svc = resolveUsageRemote();
+                  if (!svc || typeof svc.summarize !== 'function') return null;
+                  const result = svc.summarize();
+                  // RPC 形态兼容：直接给对象，或包在 { ok, value } 里。
+                  if (result && typeof result === 'object' && 'ok' in result) {
+                    return result.ok === true && result.value && typeof result.value === 'object' ? result.value : null;
+                  }
+                  return result && typeof result === 'object' ? result : null;
+                } catch {
+                  return null;
+                }
+              };
+
               return {
                 // 取值器：绑定自愈后每次渲染读到最新值。
                 get available() { return available; },
@@ -2754,6 +2986,13 @@ window.__ModuleLoader__.load({
                 // 实时取值器：running 会在一轮结束后立刻回到 false，
                 // props 快照会过期，所以菜单打开期间用它轮询最新状态。
                 readReplyState: readReplyStateInternal,
+                // 用量账本汇总：host 侧 index.js 把每次 llm/stream 调用落成 JSONL
+                // 明细并暴露 summarize()，client 这端读它来显示徽章与排序。
+                //
+                // 为什么不直接读文件：账本在 host 侧磁盘，浏览器拿不到。走
+                // remote RPC 是唯一通路——和 modelCatalog / selectModel 同一条路。
+                // 取不到就返回 null，界面据此完全不显示用量（优雅降级）。
+                readUsageIndex: readUsageIndexInternal,
                 directory: storeProxy,
                 dispose,
                 // 返回 Promise：组件照常 void 掉，测试/调用方可精确等待。
@@ -2849,6 +3088,14 @@ window.__ModuleLoader__.load({
       resetResilienceState,
       setCatalogRpcTimeout: (ms) => { catalogRpcTimeoutMs = ms; },
       setCatalogSwr: (ms) => { catalogSwrMs = ms; },
+      // 用量展示：host 侧账本的汇总由宿主提供，这里只做格式化与排序。
+      formatTokens,
+      formatDuration,
+      usageForRow,
+      sortRowsByUsage,
+      usageBadge,
+      UsagePill,
+      USAGE_SORTS,
       DICT,
     };
     return exports;

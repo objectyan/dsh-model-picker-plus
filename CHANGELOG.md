@@ -4,6 +4,59 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0-alpha.1] - 2026-10-10
+
+**逐请求的 LLM 使用账本（host 侧）** —— 新增能力，尚待真实环境验证，故走 alpha 通道。
+
+### 新增
+
+- **host 侧逐请求记账**：订阅宿主的 `llm/stream` waterfall，在**每一次**流式模型调用外层记录一条明细，
+  覆盖主对话、子代理、压缩（compaction）与标题生成等全部调用。
+- **记录的字段**（每次请求一条）：
+  - 归属：`provider`、`model`、`sessionId`、`purpose`
+  - 时间：`startedAt`、`endedAt`、`durationMs`（用于响应耗时统计与按时段分析）
+  - 用量：`inputTokens`、`outputTokens`、`cacheReadTokens`、`cacheWriteTokens`、
+    `reasoningTokens`、`totalTokens`（全部来自上游上报，缺失时**不编造 0**）
+  - 状态：`finishKind`（stop / tool-calls / max-tokens / error / aborted）、`ok`、
+    失败时的 `error.message` / `code` / `status`
+- **落盘为 JSONL**（每请求一行追加）：崩溃最多丢最后一行，不会像整体重写 JSON 那样
+  写坏已有历史；超过 8MB 自动轮转一份 `.1`。
+- **client 侧展示与排序**（本轮补齐，数据链路已端到端打通）：
+  - `readUsageIndex` 经 remote 取 host 的 `summarize()` 汇总；兼容直返与
+    `{ ok, value }` 两种 RPC 形态。取不到一律返回 `null` —— 界面不显示用量，
+    **绝不退化成「0 次」**（没数据 ≠ 用了零次）。
+  - `UsagePill` 在模型行右侧渲染中性灰用量胶囊（`N 次调用 · 1.5M tok`），
+    hover 显示成功/失败次数、token 与累计耗时。刻意不占用 `CAP_TONES` 的能力色，
+    避免「颜色 = 能力」的误读。
+  - 排序维度切换：默认 / 按调用次数 / 按 token 量 / 按耗时，
+    仅在「最近使用」「收藏」列表生效（按用量重排这两张清单最有意义）。
+  - 无账本数据时整组排序控件隐藏 —— 排不出差异，点了等于没反应。
+  - 稳定排序：无用量记录的行沉底且保持原相对顺序，位置不会因排序抖动。
+
+### 设计说明
+
+统计必须放在 host 侧：client（`platform: web`）订阅不到宿主的 `llm/stream` 事件，
+拿不到 provider/model 归属与上游上报的精确 token。因此本包改为双端协作——
+`index.js` 负责收集，`client.js` 负责展示。
+
+### 测试
+
+四套共覆盖记账、聚合、跨端链路与 UI 渲染：
+
+- `tests/host-usage.mjs` —— 归一化、透传、边界（异常/截断/多帧合并）、落盘与聚合
+- `tests/host-apply.mjs` —— `apply()` 订阅、端到端落盘、汇总暴露、降级路径
+- `tests/host-client-wiring.mjs` —— **跨端链路**：host `summarize()` → client 读取器
+  （直返 / 包壳 / 报错 / 抛错四种形态）
+- `tests/client.mjs` —— 原有 UI 用例 + 用量格式化、三维排序、胶囊渲染
+
+### 已知局限
+
+- 账本目录优先取 DSH 数据目录，退回 `~/.dsh/dsh-model-picker-plus`；
+  若宿主的 storage 服务不在位，会落到后者（仍可持久化）。
+- 官方 `tokenMeter` 是**会话级累计**，不带 provider/model 维度，
+  所以按模型拆分只能靠本插件自己记账；两者不会重复计数（口径不同：本插件按请求条数）。
+- 本版本为 alpha，字段结构在验证后可能调整。
+
 ## [0.5.0] - 2026-10-09
 
 相对 npm 上的 0.3.1，本次累积了多项功能与修复，故按「新增功能」升次版本号（`0.3.1 → 0.5.0`）。
