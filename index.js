@@ -303,10 +303,15 @@ export class ModelPickerUsage {
       // 而 llm/stream 是从 **LlmRuntime 实例**上 waterfall 出来的
       // （`ctx.waterfall(this, "llm/stream", options, ...)`），触发者与本插件
       // 的 fiber 不是同一个作用域，非 global 的监听器会被直接过滤掉。
-      // 症状正是「订阅成功挂上（attach.log: OK）却一次都没被调用」。
-      ctx.on('llm/stream', (options, next) => wrapStream(options, next, (record) => {
-        appendRecord(this.ledgerDir, record);
-      }), { global: true });
+      //
+      // 第二参数被调到最外层再 log：若这里都不出现，说明监听器**根本没被
+      // 派发到**（订阅无效）；出现了但账本空，才是记账环节的问题。
+      ctx.on('llm/stream', (options, next) => {
+        note(`EVT ${new Date().toISOString()} provider=${options?.provider} model=${options?.model}`);
+        return wrapStream(options, next, (record) => {
+          appendRecord(this.ledgerDir, record);
+        });
+      }, { global: true });
       this._attached = true;
       note('OK: subscribed llm/stream (global)');
     } catch (error) {
