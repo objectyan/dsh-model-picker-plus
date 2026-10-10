@@ -41,13 +41,22 @@
 
 ### 修复
 
-- **host 侧从未真正挂载**（本次最关键的一处）：
-  账本目录会被创建，却一条账都没记。根因是插件注册形态不对——DSH 的加载器
-  （cordis）只认「`Service` 子类 + 静态 `inject` 元数据」的服务，之前的
-  `export const inject = {...}` + `export function apply(ctx)` 不被识别，
-  插件实际以惰性模块载入。现改为 `createUsageService(Base)` 工厂构造服务子类，
-  基类在运行时从 `ctx` 解析（避免顶层 import 让裸 node 单测 `ERR_MODULE_NOT_FOUND`）。
-  官方 `dsh-token-meter` 用 `static inject = ["sessionProjections"]`，同一套约定。
+- **host 侧从未真正挂载**（本次最关键的一处，连续三次才定位到）：
+  账本目录会被创建，却一条账都没记。**加载探针（`loaded.marker`）把两种原因
+  一刀切开**：探针有、账本空 → 模块加载了但服务没实例化；探针都没有 → 模块压根没加载。
+  根因是插件注册形态不对，连踩三次：
+  1. `export const inject = {...}` + `export function apply()` —— 加载器不认这个形状；
+  2. 改成 `export default createUsageService`（工厂）—— 加载器执行
+     `exports = exports.default ?? exports` 后把结果当**服务类**，拿到的是
+     「造类的函数」，实例化失败；
+  3. `export default class ... extends resolveServiceBase()` —— 但
+     `resolveServiceBase()` 拿不到真基类：`@deepseek-ai/cordis` **不在 profile 的
+     node_modules 里**（只存在于 app.asar 内部），`createRequire` 同样解析不到，
+     于是静默退化成普通类 —— 类能 `new` 但缺 fiber/ctx 注入，构造函数里的订阅挂不上。
+  终解：`default` 导出类本身，基类优先从 `ctx`（加载器自己的可达路径）解析，
+  再退回 `createRequire`，最后才退化。官方 `dsh-token-meter` 直接
+  `export default class extends Service`，是同一套约定。
+  新增回归测试锁住三点：`default` 是构造函数、带静态 `inject`、可被 `new` 实例化。
 - **多帧 usage 合并丢字段**：归一化时写出显式 `undefined` 键，后一帧的
   `undefined` 覆盖了前一帧已有的值，表现为「上报越多次、token 反而越少」。
   改为只有真正拿到数值才写键。

@@ -236,7 +236,7 @@ export function buildUsageIndex(records) {
  * 官方 dsh-token-meter 直接 `export default class extends Service`，
  * 是同一套约定。
  */
-/** 测试环境用的退化基类（cordis 的 Service 只在宿主运行时可解析）。 */
+/** 测试环境用的退化基类（宿主运行时能拿到真的 cordis Service）。 */
 const FallbackService = class {
   constructor(context) { this.ctx = context; }
 };
@@ -244,35 +244,44 @@ const FallbackService = class {
 /**
  * 宿主运行时 cordis 的 Service 基类。
  *
- * 为什么不在顶部直接 import：DSH 的插件包在宿主里能解析 @deepseek-ai/cordis，
- * 但本包的单元测试是裸 node 跑的（没有 DSH 的 node_modules 树），顶层硬
- * import 会让**全部**测试 ERR_MODULE_NOT_FOUND——包括与本文件无关的用例。
- * 这里做同步动态解析：宿主上拿到真基类（静态 inject 元数据生效），测试环境
- * 退化成普通类，服务逻辑完全一致。
+ * 为什么必须在运行时解析、而且不能 import：
+ *   · 本包的单元测试是裸 node 跑的（没有 DSH 的 node_modules 树），顶层
+ *     `import ... from '@deepseek-ai/cordis'` 会让**全部**测试
+ *     ERR_MODULE_NOT_FOUND —— 包括与本文件无关的用例；
+ *   · 更关键：cordis **不在 profile 的 node_modules 里**（它只存在于
+ *     app.asar 内部），所以 createRequire 也解析不到。
+ *     第三版曾因此静默退化成 FallbackService——类能 new，但缺了 cordis 的
+ *     fiber/ctx 注入机制，构造函数里的 ctx.on(...) 根本没挂上，
+ *     症状是「模块加载了（探针有）却一条账都没有」。
+ *
+ * 现在的取法：Service 基类在 cordis 的运行上下文里是可达的（加载器自己就用
+ * ctx.registry），先从 ctx 上找，再退回退化类。
  */
-function resolveServiceBase() {
+function resolveServiceBase(ctx) {
   try {
-    // cordis 通过 globalThis 暴露基类（加载器自身就是这么拿的）。
-    const g = globalThis;
-    const fromRegistry = g?.Service ?? g?.cordis?.Service ?? g?.__cordis__?.Service;
-    if (typeof fromRegistry === 'function') return fromRegistry;
+    const fromCtx = ctx?.Service
+      ?? ctx?.constructor?.Service
+      ?? ctx?.root?.Service
+      ?? ctx?.reflect?.Service;
+    if (typeof fromCtx === 'function') return fromCtx;
   } catch { /* 继续退化 */ }
   try {
-    // createRequire 能在宿主里解析到 cordis（它是宿主依赖树里的包）。
     const req = createRequire(import.meta.url);
     const mod = req('@deepseek-ai/cordis');
     if (typeof mod?.Service === 'function') return mod.Service;
-  } catch { /* 继续退化 */ }
+  } catch { /* cordis 不在可达范围（宿主 asar 内的常态） */ }
   return FallbackService;
 }
 
 /**
  * Host 侧服务：订阅 llm/stream，把每次模型调用落成一条 JSONL 明细。
  *
- * 必须是「Service 子类 + 静态 inject 元数据」：DSH 的加载器（cordis）只认这个
- * 形状，而 default 导出必须**是类本身**（见上方踩坑记录）。
+ * 必须是「Service 子类 + 静态 inject 元数据」，且 default 导出**是类本身**：
+ * cordis 的 execute() 走 `new runtime.callback(ctx, config)`，加载器还会先做
+ * `exports = exports.default ?? exports`。导出工厂函数 → 拿到函数不是类 →
+ * 服务建不起来（见文件头踩坑记录）。
  */
-export default class ModelPickerUsage extends resolveServiceBase() {
+export class ModelPickerUsage extends resolveServiceBase() {
   // storage 用来挑数据目录；缺失也能工作（退回 ~/.dsh），所以走 optional。
   static inject = { optional: ['storage'] };
 
@@ -303,6 +312,12 @@ export default class ModelPickerUsage extends resolveServiceBase() {
     return readLedger(this.ledgerDir).slice(-Math.max(1, Math.min(5000, limit)));
   }
 }
+
+/**
+ * 加载器读的是 `exports.default ?? exports`，所以 default 必须是类本身。
+ * （导出工厂函数会让加载器拿到「造类的函数」，服务永远建不起来。）
+ */
+export default ModelPickerUsage;
 
 /** 兼容旧形态：部分加载路径仍会调用 apply(ctx)。 */
 export function apply(ctx) {

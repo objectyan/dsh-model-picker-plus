@@ -106,6 +106,33 @@ console.log('\n== apply：缺能力时静默降级 ==');
   }
 }
 
+console.log('\n== 注册契约：加载器能真正实例化 ==');
+{
+  const { default: ServiceClass } = await import('../index.js');
+  // cordis 的 registry.resolve() 只收「函数 / 带 apply 的对象」，
+  // 然后 execute() 走 `new callback(ctx, config)`。三者必须同时成立。
+  check('default 导出是构造函数', typeof ServiceClass === 'function');
+  check('带静态 inject 元数据', typeof ServiceClass?.inject === 'object'
+    && Array.isArray(ServiceClass.inject.optional));
+  const dir = mkdtempSync(join(tmpdir(), 'mp-ctor-'));
+  try {
+    let instance = null;
+    let threw = null;
+    try { instance = new ServiceClass(makeCtx({ dataDir: dir }).ctx); } catch (error) { threw = error; }
+    check('可被 new 实例化（加载器做的事）', threw === null && instance !== null,
+      threw ? String(threw.message ?? threw) : '');
+    check('实例暴露 summarize/recent', typeof instance?.summarize === 'function'
+      && typeof instance?.recent === 'function');
+    // 回归守卫：曾因拿不到 cordis 的 Service 基类而静默退化成普通类——
+    // 类能 new，但缺 fiber/ctx 注入，构造函数里的订阅挂不上。
+    check('账本目录已解析（基类可用的旁证）',
+      typeof instance?.ledgerDir === 'string' && instance.ledgerDir.length > 0,
+      instance?.ledgerDir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 console.log('\n== 记账失败不影响调用结果 ==');
 {
   // 账本目录不可写时，调用结果必须照常返回。
