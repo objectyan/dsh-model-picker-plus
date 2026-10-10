@@ -39,6 +39,22 @@
 拿不到 provider/model 归属与上游上报的精确 token。因此本包改为双端协作——
 `index.js` 负责收集，`client.js` 负责展示。
 
+### 修复
+
+- **host 侧从未真正挂载**（本次最关键的一处）：
+  账本目录会被创建，却一条账都没记。根因是插件注册形态不对——DSH 的加载器
+  （cordis）只认「`Service` 子类 + 静态 `inject` 元数据」的服务，之前的
+  `export const inject = {...}` + `export function apply(ctx)` 不被识别，
+  插件实际以惰性模块载入。现改为 `createUsageService(Base)` 工厂构造服务子类，
+  基类在运行时从 `ctx` 解析（避免顶层 import 让裸 node 单测 `ERR_MODULE_NOT_FOUND`）。
+  官方 `dsh-token-meter` 用 `static inject = ["sessionProjections"]`，同一套约定。
+- **多帧 usage 合并丢字段**：归一化时写出显式 `undefined` 键，后一帧的
+  `undefined` 覆盖了前一帧已有的值，表现为「上报越多次、token 反而越少」。
+  改为只有真正拿到数值才写键。
+- **组件状态序号漂移**：新增两个 `useState` 后，测试里硬编码的状态序号整体错位，
+  思考档位面板的两条断言因此失败。已同步序号并加注释说明该序号与
+  `useState` 调用顺序绑定。
+
 ### 测试
 
 四套共覆盖记账、聚合、跨端链路与 UI 渲染：
