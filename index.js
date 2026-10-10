@@ -15,14 +15,13 @@
 // 落盘：JSONL 追加（每行一条），写到插件自己的数据目录下。
 //   追加写的好处：崩溃/断电最多丢最后一行，不会像"整体重写 JSON"那样
 //   把已积累的历史一起写坏。
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-export const name = 'model-picker-plus-usage';
-// llm 用来订阅流；storage 可选（用于挑选数据目录），缺失不影响记录。
-export const inject = { optional: ['llm', 'storage'] };
-
+// 依赖声明：storage 用来挑数据目录（可选，缺失时退回 ~/.dsh）；
+// llm 只在诊断时读取，不订阅（记账靠 ctx.on('llm/stream')，与 llm 服务无
+// 生命周期耦合，所以不必 inject——少一个硬依赖就少一个挂载失败的理由）。
 const LEDGER_FILE = 'llm-usage.jsonl';
 const MAX_FILE_BYTES = 8 * 1024 * 1024; // 超过就轮转一份 .1，避免无限增长
 
@@ -100,6 +99,26 @@ function appendRecord(dir, record) {
 
 let warnFn = null;
 const ctxWarn = (msg) => { if (warnFn) warnFn(msg); };
+
+/**
+ * 解析 cordis 的 Service 基类。
+ *
+ * 为什么不在顶部直接 `import { Service } from '@deepseek-ai/cordis'`：
+ * 宿主运行时能解析这个包，但本包的单元测试是裸 node 跑的（没有 DSH 的
+ * node_modules 树），硬 import 会让**所有**测试直接 ERR_MODULE_NOT_FOUND——
+ * 包括那些根本不涉及服务类的用例。这里改成动态解析：宿主上拿到真基类，
+ * 测试环境退化为普通类，服务逻辑本身完全不受影响。
+ */
+function resolveServiceBase(ctx) {
+  try {
+    // cordis 会把基类挂在 ctx 链上（Service.prototype），这是最可靠的来源。
+    const candidate = ctx?.Service ?? ctx?.constructor?.Service;
+    if (typeof candidate === 'function') return candidate;
+  } catch { /* 继续找别的来源 */ }
+  return class {
+    constructor(context) { this.ctx = context; }
+  };
+}
 
 /**
  * 包一层 llm/stream：透传所有 chunk，只在结束时落一条账。
@@ -200,30 +219,65 @@ export function buildUsageIndex(records) {
   return out;
 }
 
-export function apply(ctx) {
-  const dir = resolveDataDir(ctx);
-  try { warnFn = typeof ctx?.logger?.warn === 'function' ? ctx.logger.warn.bind(ctx.logger) : null; } catch { warnFn = null; }
+/**
+ * Host 侧服务：订阅 llm/stream，把每次模型调用落成一条 JSONL 明细。
+ *
+ * 为什么用工厂（而不是直接 `class X extends Service`）：DSH 的插件加载器
+ * （cordis）要求服务是带**静态 inject 元数据**的 Service 子类。但 cordis 的
+ * `Service` 只在宿主运行时可解析，本包的单元测试是裸 node 跑的——顶层硬
+ * import 会让全部测试 ERR_MODULE_NOT_FOUND，包括与本文件无关的用例。
+ * 工厂形式把基类解析推迟到运行时：宿主上继承真 Service，测试环境退化为
+ * 普通类，服务逻辑完全一致。
+ *
+ * 附注：早期版本用 `export const inject = {...}` + `export function apply()`，
+ * 加载器不认，host 侧从未真正挂载——症状是账本目录被创建却一条账都没有。
+ * 官方的 dsh-token-meter 用 `static inject = ["sessionProjections"]`，
+ * 是同一套约定。
+ */
+export function createUsageService(Base) {
+  return class ModelPickerUsage extends Base {
+    // storage 用来挑数据目录；缺失也能工作（退回 ~/.dsh），所以走 optional。
+    static inject = { optional: ['storage'] };
 
-  // llm 服务可能尚未就绪：用 inject 等它，拿不到就静默退让（插件其余功能照常）。
-  if (typeof ctx?.on !== 'function') return;
-  try {
-    ctx.on('llm/stream', (options, next) => wrapStream(options, next, (record) => {
-      appendRecord(dir, record);
-    }));
-  } catch { /* 订阅失败不影响插件其他部分 */ }
+    constructor(ctx, _config = {}) {
+      super(ctx);
+      this.ledgerDir = resolveDataDir(ctx);
+      this.ledgerPath = this.ledgerDir ? join(this.ledgerDir, LEDGER_FILE) : null;
+      try { warnFn = typeof ctx?.logger?.warn === 'function' ? ctx.logger.warn.bind(ctx.logger) : null; } catch { warnFn = null; }
 
-  // 暴露给 client：读账本并聚合。client 侧（platform: web）拿不到宿主的
-  // llm/stream 事件，但可以通过这个接口拿到汇总用于展示与排序。
-  try {
-    ctx.provide?.('modelPickerUsage', {
-      indexPath: dir ? join(dir, LEDGER_FILE) : null,
-      /** 返回 { "provider/model": {...} } 汇总。 */
-      summarize: () => buildUsageIndex(readLedger(dir)),
-      /** 返回最近 N 条明细（默认 200），用于诊断。 */
-      recent: (limit = 200) => readLedger(dir).slice(-Math.max(1, Math.min(5000, limit))),
-    });
-  } catch { /* 无 provide 能力时跳过，不影响记账 */ }
+      // 订阅 waterfall：每次流式调用都会经过这里（含重试/重放/路由）。
+      // 记不上账只影响统计，绝不影响模型调用本身——所以整段包在 try/catch。
+      try {
+        ctx.on('llm/stream', (options, next) => wrapStream(options, next, (record) => {
+          appendRecord(this.ledgerDir, record);
+        }));
+      } catch (error) {
+        ctxWarn(`订阅 llm/stream 失败：${error?.message ?? error}`);
+      }
+    }
+
+    /** 读账本并聚合；client 通过 RPC 调用它来渲染用量徽章与排序。 */
+    summarize() {
+      return buildUsageIndex(readLedger(this.ledgerDir));
+    }
+
+    /** 最近 N 条明细，用于诊断。 */
+    recent(limit = 200) {
+      return readLedger(this.ledgerDir).slice(-Math.max(1, Math.min(5000, limit)));
+    }
+  };
 }
+
+/** 兼容旧形态：部分加载路径仍会调用 apply(ctx)。 */
+export function apply(ctx) {
+  const ServiceClass = createUsageService(resolveServiceBase(ctx));
+  const service = new ServiceClass(ctx);
+  // 旧路径没有 Service 的取件机制，直接把实例挂到 ctx 上供 client 取用。
+  try { ctx.modelPickerUsage = service; } catch { /* ctx 不可写则忽略 */ }
+  return service;
+}
+
+export default createUsageService;
 
 /** 供测试/诊断：读取账本（解析失败的行跳过）。 */
 export function readLedger(dir) {

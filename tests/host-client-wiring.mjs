@@ -17,14 +17,12 @@ console.log('== host 提供 summarize，client 能取到 ==');
 {
   const dir = mkdtempSync(join(tmpdir(), 'mp-wire-'));
   try {
-    const provided = {};
     const ctx = {
       get: (key) => (key === 'storage' ? { dataDir: dir } : undefined),
       logger: { warn: () => {} },
-      provide: (key, value) => { provided[key] = value; },
       on: () => {},
     };
-    apply(ctx);
+    const service = apply(ctx);
 
     // 模拟 host 真实记账：写两条明细。
     const ledgerDir = join(dir, 'dsh-model-picker-plus');
@@ -35,8 +33,8 @@ console.log('== host 提供 summarize，client 能取到 ==');
     ];
     for (const row of rows) appendFileSync(join(ledgerDir, 'llm-usage.jsonl'), `${JSON.stringify(row)}\n`, 'utf8');
 
-    check('host 暴露了 summarize', typeof provided.modelPickerUsage?.summarize === 'function');
-    const index = provided.modelPickerUsage.summarize();
+    check('服务实例带 summarize', typeof service?.summarize === 'function');
+    const index = service.summarize();
     check('汇总含该 provider/model 的条目', index['deepseek/deepseek-v4-pro']?.calls === 2,
       JSON.stringify(index['deepseek/deepseek-v4-pro']));
 
@@ -53,7 +51,7 @@ console.log('== host 提供 summarize，client 能取到 ==');
         return null;
       }
     };
-    const viaDirect = readUsageIndex(provided.modelPickerUsage);
+    const viaDirect = readUsageIndex(service);
     // summarize() 每次重新聚合，返回的是新对象——必须深比较，不能用引用相等。
     check('client 能取到汇总（直返形态）',
       viaDirect !== null && viaDirect['deepseek/deepseek-v4-pro']?.calls === 2

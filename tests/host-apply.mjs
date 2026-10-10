@@ -34,13 +34,17 @@ console.log('== apply：正常路径 ==');
 {
   const dir = mkdtempSync(join(tmpdir(), 'mp-apply-'));
   try {
-    const { ctx, subscriptions, provided } = makeCtx({ dataDir: dir });
-    apply(ctx);
+    const { ctx, subscriptions } = makeCtx({ dataDir: dir });
+    const service = apply(ctx);
 
     check('订阅了 llm/stream', subscriptions.length === 1 && subscriptions[0].event === 'llm/stream',
       subscriptions.map(s => s.event).join(','));
-    check('暴露了汇总接口给 client', typeof provided.modelPickerUsage?.summarize === 'function'
-      && typeof provided.modelPickerUsage?.recent === 'function');
+    // 服务实例是暴露给 client 的唯一入口（取代旧的 ctx.provide）。
+    check('apply 返回带汇总接口的服务实例', typeof service?.summarize === 'function'
+      && typeof service?.recent === 'function');
+    check('服务实例挂到 ctx 供 client 取件', ctx.modelPickerUsage === service);
+    check('暴露的账本路径可定位', typeof service.ledgerPath === 'string' && service.ledgerPath.endsWith('llm-usage.jsonl'),
+      service.ledgerPath);
 
     // 驱动一次订阅：确认真的落到盘上
     const handler = subscriptions[0].handler;
@@ -64,10 +68,10 @@ console.log('== apply：正常路径 ==');
       && rows[0].sessionId === 'sess-1' && rows[0].inputTokens === 10 && rows[0].ok === true);
 
     // 汇总接口能读到刚写的这条
-    const index = provided.modelPickerUsage.summarize();
+    const index = service.summarize();
     check('汇总接口反映写入结果', index['prov/mod']?.calls === 1 && index['prov/mod']?.tokens === 12,
       JSON.stringify(index));
-    check('recent 返回明细', provided.modelPickerUsage.recent(10).length === 1);
+    check('recent 返回明细', service.recent(10).length === 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
