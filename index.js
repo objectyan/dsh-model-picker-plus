@@ -270,8 +270,14 @@ const INIT_HOOKS = Symbol.for('cordis.initHooks');
  *   真正的答案一直是最简单的那种：普通 apply 函数 + 顶层 inject 数组。
  */
 export const name = 'model-picker-plus';
-// storage 用来挑数据目录；缺失也能工作（退回 ~/.dsh），所以走 optional。
-export const inject = { optional: ['storage'] };
+// inject 用**普通数组**，与官方可工作的 host 插件对齐
+// （dsh-tool-antigravity 是 `const inject = ["llm", "attachments"]`）。
+//
+// 之前写成 `{ optional: ['storage'] }` —— 那是 cordis Inject 装饰器的写法，
+// **普通函数插件不认**。加载器解析不了这个 inject，给出的 ctx 就是残的
+// （实测 ctx.inject/effect 皆 undefined、所有服务 get=undef、事件永不派发）。
+// 这是最后一个坑：形态看着无害，却让整条链路静默失效。
+export const inject = ['llm', 'storage'];
 
 /** Debug diagnostics are written here so a failed mount is never silent. */
 function noteTo(dir, line) {

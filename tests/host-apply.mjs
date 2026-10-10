@@ -121,6 +121,11 @@ console.log('\n== 注册契约：与官方 host 插件同形 ==');
   check('导出 apply 函数', typeof mod.apply === 'function');
   check('导出 name 字符串', typeof mod.name === 'string' && mod.name.length > 0, mod.name);
   check('导出 inject 声明', mod.inject !== undefined, JSON.stringify(mod.inject));
+  // inject 必须是普通数组：官方 antigravity 就是 `["llm", "attachments"]`。
+  // 写成 { optional: [...] }（cordis Inject 装饰器写法）时加载器解析不了，
+  // 给出的 ctx 是残的——服务全 get=undef、事件永不派发（实测确认）。
+  check('inject 是普通数组（不是 optional 对象）', Array.isArray(mod.inject),
+    JSON.stringify(mod.inject));
   // 回归守卫：曾误改成 Service 子类 / 工厂函数 / default class —— 那些形态下
   // 加载器给的 ctx 是残的（inject/effect undefined、服务全取不到）。
   check('不导出 default（避免加载器误取）', mod.default === undefined,
