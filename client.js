@@ -1720,7 +1720,13 @@ window.__ModuleLoader__.load({
             (error) => {
               if (cancelled) return;
               // 静默降级：拿不到就不显示用量，不打扰用户。
-              if (error?.name !== 'AbortError') mark('usage snapshot failed', String(error?.message ?? error));
+              // 但诊断开关打开时要说清楚失败原因，否则无从判断卡在哪。
+              if (error?.name !== 'AbortError') {
+                mark('usage snapshot failed', String(error?.message ?? error));
+                try {
+                  if (localStorage.getItem('__mpDebugUsage') === '1') console.warn('[mp-usage-rpc] snapshot failed:', error?.message ?? error);
+                } catch { /* 诊断本身不影响主流程 */ }
+              }
             },
           );
         return () => { cancelled = true; controller?.abort(); };
@@ -2951,22 +2957,34 @@ window.__ModuleLoader__.load({
               // ── 用量账本：走 Connection RPC 异步读取 ────────────────
               //
               // 账本在 host 侧磁盘，浏览器读不到，只能由 host 聚合后回传。
-              // host half（usage-host.js）用 connection.rpc.intercept 注册了
-              // `model-picker-plus-usage/snapshot`，走的是 DSH 自己的 /api 通道
-              // ——origin / 认证 / peer 准入都由 Connection 负责，不新开路由。
+              // host half（usage-host.js）用 `connection.fetch.register({ path })`
+              // 注册了精确路由 `/api/model-picker-plus-usage/snapshot`，
+              // 认证 / 来源检查 / peer 准入都由 Connection 负责。
               //
               // 取件按存活概率排序：connection 服务 → session 上搭便车的 remote。
               // 任一步失败都返回 null（界面不显示用量），绝不退化成「0 次」
               // ——「没数据」和「用了 0 次」是两件不同的事。
               const resolveUsageRpc = () => {
+                const tries = [];
                 try {
                   const ns = typeof ctx.get === 'function' ? ctx.get('connection') : undefined;
+                  tries.push(`ctx.get(connection)=${ns ? (typeof ns.rpc?.call === 'function' ? 'rpc.call ok' : 'no rpc.call') : 'undefined'}`);
                   if (ns && typeof ns.rpc?.call === 'function') return ns.rpc;
-                } catch { /* 继续找下一个来源 */ }
+                } catch (error) {
+                  tries.push(`ctx.get(connection) threw: ${error?.message ?? error}`);
+                }
                 try {
                   const sessionRemote = sessions?.binding?.(sessionId)?.session?.remote;
+                  tries.push(`session.remote=${sessionRemote ? (typeof sessionRemote.rpc?.call === 'function' ? 'rpc.call ok' : 'no rpc.call') : 'undefined'}`);
                   if (sessionRemote && typeof sessionRemote.rpc?.call === 'function') return sessionRemote.rpc;
-                } catch { /* 没有可用的 RPC 通道 */ }
+                } catch (error) {
+                  tries.push(`session.remote threw: ${error?.message ?? error}`);
+                }
+                // 诊断开关打开时把取件结果摊开——「拿不到 RPC」必须可观测，
+                // 否则界面只是安静地不显示用量，无从判断卡在哪。
+                try {
+                  if (localStorage.getItem('__mpDebugUsage') === '1') console.log('[mp-usage-rpc]', tries.join(' | '));
+                } catch { /* 诊断本身不影响主流程 */ }
                 return null;
               };
               const readUsageSnapshot = (payload = {}, signal) => requestUsageSnapshot(resolveUsageRpc(), payload, signal);
