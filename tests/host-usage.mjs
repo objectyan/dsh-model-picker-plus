@@ -331,6 +331,31 @@ console.log('\n== apply：订阅与降级 ==');
       noConnThrew === null && noConnSubs.includes('llm/stream'),
       String(noConnThrew ?? noConnSubs.join(',')));
 
+    // connection 在 apply 时未就绪是常态（启动早期它就是没有）：
+    // 必须走 ctx.inject(['connection'], cb) 这种**非阻塞**的等待方式，
+    // 依赖就绪后回调再注册 RPC。定时器重试不可靠——宿主的计时器服务
+    // 同样可能未就绪，会静默不执行（实测踩过）。
+    let injectDeps = null;
+    let injectCallback = null;
+    const deferredCtx = {
+      logger: { warn: () => {} },
+      on: () => {},
+      get: () => undefined,
+      inject: (deps, cb) => { injectDeps = deps; injectCallback = cb; },
+    };
+    apply(deferredCtx, { dataDir: dir });
+    check('connection 未就绪时用 ctx.inject 等待（不阻塞挂载）',
+      Array.isArray(injectDeps) && injectDeps.includes('connection'), JSON.stringify(injectDeps));
+
+    // 依赖就绪后回调：此时应真正注册到命名通道。
+    let lateChannel = null;
+    if (typeof injectCallback === 'function') {
+      injectCallback({
+        connection: { rpc: { handle: (name) => { lateChannel = name; return () => {}; } } },
+      });
+    }
+    check('依赖就绪后注册到命名通道', lateChannel === RPC_NAMESPACE, String(lateChannel));
+
     // 账本目录不可写也不能抛：采集是旁路功能，不能拖垮插件加载。
     let badDirThrew = null;
     try { apply({ logger: { warn: () => {} }, on: () => {} }, { dataDir: '\u0000invalid' }); } catch (e) { badDirThrew = e; }

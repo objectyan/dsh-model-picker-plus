@@ -270,19 +270,22 @@ export function apply(ctx, config = {}) {
       return false;
     }
   };
-  // connection 不写进 inject（否则 connection 未就绪时整个插件挂不上），
-  // 改为运行时探测：拿到就注册，拿不到就稍后重试。
+  // connection 不写进顶层 inject（那会让「connection 未就绪」变成「插件挂不上」），
+  // 改用 **ctx.inject(deps, cb)**：它注册的是一个子插件，只在该依赖就绪时被回调，
+  // **不会阻塞父插件挂载**，也不需要自己轮询/计时器。
+  // 这比定时器重试可靠得多——实测定时器方案在宿主的计时器服务未就绪时会静默不执行。
   attempt('apply');
-  // 多数情况下 connection 在 apply 之后才就绪：借用宿主的计时器再探一次。
-  // 用 ctx.setTimeout 而非全局 setTimeout —— 宿主 context 提供的是 fiber 效果，
-  // 插件卸载时会自动清理，不留悬挂定时器。
-  const retry = () => { attempt('retry'); };
-  try {
-    if (typeof ctx.setTimeout === 'function') ctx.setTimeout(retry, 1500);
-    else if (typeof ctx.effect === 'function') {
-      ctx.effect(() => { const t = setTimeout(retry, 1500); return () => clearTimeout(t); }, 'model-picker-plus: usage RPC retry');
-    } else if (typeof setTimeout === 'function') setTimeout(retry, 1500).unref?.();
-  } catch { /* 拿不到计时器就只靠 apply 时机那一次 */ }
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['connection'], (scope) => {
+        if (registered) return;
+        const conn = scope?.connection ?? (typeof scope?.get === 'function' ? scope.get('connection') : undefined);
+        if (conn) registered = tryRegister(conn, 'ctx.inject([connection])');
+      });
+    } catch (error) {
+      note(`RPC-INJECT-FAIL ${error?.message ?? error}`);
+    }
+  }
   return service;
 }
 export const __test = { normalizeUsage, normalizeFinish, wrapStream, appendRecord, summarize, buildUsageIndex, totalOf, LEDGER_FILE };
