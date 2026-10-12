@@ -126,6 +126,18 @@ window.__ModuleLoader__.load({
         usageSortLabel: '排序',
         usageSortOff: '默认',
         usageTitle: '调用 {calls} 次 · {tokens} token · 耗时 {duration}',
+        // 设置页：用量明细表
+        usageDetailTitle: '模型用量明细',
+        usageDetailCallsLabel: '记录数',
+        usageColTime: '时间',
+        usageColProvider: '提供方',
+        usageColModel: '模型',
+        usageColTokens: 'token',
+        usageColDuration: '耗时',
+        usageColStatus: '状态',
+        usageOk: '成功',
+        usageFailed: '失败',
+        usageEmpty: '还没有用量记录',
         providers: '全部来源',
         noResults: '没有匹配的模型',
         retry: '重试',
@@ -208,6 +220,18 @@ window.__ModuleLoader__.load({
         usageSortLabel: 'Sort',
         usageSortOff: 'Default',
         usageTitle: '{calls} calls · {tokens} tokens · {duration}',
+        // Settings page: usage detail table
+        usageDetailTitle: 'Model usage detail',
+        usageDetailCallsLabel: 'records',
+        usageColTime: 'Time',
+        usageColProvider: 'Provider',
+        usageColModel: 'Model',
+        usageColTokens: 'tokens',
+        usageColDuration: 'Duration',
+        usageColStatus: 'Status',
+        usageOk: 'ok',
+        usageFailed: 'failed',
+        usageEmpty: 'No usage records yet',
         providers: 'All providers',
         noResults: 'No matching models',
         retry: 'Retry',
@@ -2527,6 +2551,7 @@ window.__ModuleLoader__.load({
                         favorite: favoriteSet.has(key),
                         onFavorite: toggleFavorite,
                         onSelect: choose,
+                        usage: usageBadge(usageIndex, group, model, t),
                         t,
                       });
                     }),
@@ -2548,6 +2573,7 @@ window.__ModuleLoader__.load({
                     favorite: favoriteSet.has(key),
                     onFavorite: toggleFavorite,
                     onSelect: choose,
+                    usage: usageBadge(usageIndex, group, model, t),
                     showProvider: true,
                     showProviderBadge: true,
                     t,
@@ -2569,6 +2595,7 @@ window.__ModuleLoader__.load({
                     favorite: favoriteSet.has(key),
                     onFavorite: toggleFavorite,
                     onSelect: choose,
+                    usage: usageBadge(usageIndex, group, model, t),
                     showProviderBadge: true,
                     t,
                   });
@@ -2698,6 +2725,27 @@ window.__ModuleLoader__.load({
         const slots = scope.slots;
         const modelDirectories = scope.modelDirectories;
         const sessions = scope.sessions;
+
+        // 设置页：模型用量明细（settings.section 是「每个条目一个设置页」的正式挂点）。
+        // 注册条件与主槽位一致：缺 slots 能力就退让，不让插件挂载失败。
+        try {
+          if (slots && typeof slots.inject === 'function') {
+            slots.inject('settings.section', () => slots.register({
+              name: 'settings.section',
+              id: 'model-picker-plus-usage',
+              order: 20,
+              label: () => translate('usageDetailTitle'),
+              render: (props) => React.createElement(UsageDetailPage, {
+                rpc: props?.rpc ?? usageRpcForSettings(),
+                onClose: props?.onClose,
+              }),
+            }));
+            mark('settings.section registered');
+          }
+        } catch (error) {
+          mark('settings.section register failed', String(error?.message ?? error));
+        }
+
         // register is called from inside the inject callback, i.e. while the
         // composer renders: an absent register() must decline the mount here
         // rather than throw through React later.
@@ -3016,6 +3064,16 @@ window.__ModuleLoader__.load({
               };
               const readUsageSnapshot = (payload = {}, signal) => requestUsageSnapshot(resolveUsageRpc(), payload, signal);
 
+              // 设置页用：登录态下取 /api 通道。设置页没有 session 上下文，
+              // 所以只走 connection 服务（host 侧同一份 summary，不依赖会话）。
+              const usageRpcForSettings = () => {
+                try {
+                  const ns = typeof ctx.get === 'function' ? ctx.get('connection') : undefined;
+                  if (ns && typeof ns.rpc?.call === 'function') return ns.rpc;
+                } catch { /* 取不到就交给界面显示错误 */ }
+                return null;
+              };
+
               return {
                 // 取值器：绑定自愈后每次渲染读到最新值。
                 get available() { return available; },
@@ -3093,6 +3151,97 @@ window.__ModuleLoader__.load({
       });
     }
 
+    // ── 设置页：模型用量明细 ─────────────────────────────────
+    //
+    // 模型选择器里只放得下「N 次调用 · X tok」这样的一枚胶囊；完整明细
+    // （每次请求的时间、耗时、token、成功/失败）放在设置页，需要时再来看。
+    // 通过 settings.section 注册成设置页的一个独立条目。
+    const UsageDetailPage = memo(function UsageDetailPage({ rpc, onClose }) {
+      // 自包含：设置页没有会话上下文，translate/colors 由插件自己拿，
+      // 不依赖 ModelPickerPlus 的作用域。
+      const t = translate;
+      const [snapshot, setSnapshot] = useState(null);
+      const [error, setError] = useState(null);
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        if (!rpc || typeof rpc.call !== 'function') {
+          setError('Usage RPC 不可用'); setLoading(false); return undefined;
+        }
+        let cancelled = false;
+        Promise.resolve()
+          .then(() => rpc.call('/api', 'model-picker-plus-usage/snapshot', { limit: 200 }))
+          .then((result) => {
+            if (cancelled) return;
+            const value = result?.value;
+            if (!result?.ok || value?.schemaVersion !== 2) { setError('读取失败'); return; }
+            setSnapshot(value); setLoading(false);
+          })
+          .catch((e) => { if (!cancelled) { setError(String(e?.message ?? e)); setLoading(false); } });
+        return () => { cancelled = true; };
+      }, [rpc]);
+
+      const rows = snapshot?.recent ?? [];
+      const status = snapshot?.status ?? null;
+      const wrap = { padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '14px', minHeight: 0 };
+
+      return React.createElement('div', { style: wrap },
+        React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+          React.createElement('span', { style: { fontSize: '14px', fontWeight: 700, color: colors.text } }, t('usageDetailTitle')),
+          React.createElement('span', { style: { fontSize: '11px', color: colors.muted } },
+            status ? `${t('usageDetailCallsLabel')} ${status.recordCount}` : ''),
+          onClose
+            ? React.createElement('button', {
+              type: 'button', onClick: onClose,
+              style: { marginLeft: 'auto', border: 'none', background: 'transparent', color: colors.muted, cursor: 'pointer', fontSize: '12px' },
+            }, t('close'))
+            : null,
+        ),
+        loading
+          ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px' } }, t('loading'))
+          : error
+            ? React.createElement('div', { style: { color: colors.danger, fontSize: '12.5px' } }, error)
+            : rows.length === 0
+              ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px' } }, t('usageEmpty'))
+              : React.createElement('div', {
+                style: {
+                  flex: 1, minHeight: 0, overflowY: 'auto',
+                  border: `1px solid ${colors.border}`, borderRadius: '10px',
+                },
+              },
+                React.createElement('table', {
+                  style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px', fontFamily: 'ui-monospace, Consolas, monospace' },
+                },
+                  React.createElement('thead', null,
+                    React.createElement('tr', null,
+                      [t('usageColTime'), t('usageColProvider'), t('usageColModel'), t('usageColCalls'), t('usageColTokens'), t('usageColDuration'), t('usageColStatus')]
+                        .map(head => React.createElement('th', {
+                          key: head,
+                          style: { textAlign: 'left', padding: '7px 9px', color: colors.muted, fontWeight: 600, borderBottom: `1px solid ${colors.border}`, whiteSpace: 'nowrap' },
+                        }, head)),
+                    ),
+                  ),
+                  React.createElement('tbody', null,
+                    rows.map((row, index) => React.createElement('tr', {
+                      key: `${row.requestId ?? index}`,
+                      style: { borderBottom: `1px solid ${colors.border}` },
+                    },
+                      React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, whiteSpace: 'nowrap' } },
+                        new Date(row.startedAt).toLocaleString()),
+                      React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, whiteSpace: 'nowrap' } }, String(row.provider)),
+                      React.createElement('td', { style: { padding: '6px 9px', color: colors.text, whiteSpace: 'nowrap' } }, String(row.model)),
+                      React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, textAlign: 'right' } }, '1'),
+                      React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, textAlign: 'right' } }, String(row.totalTokens ?? '—')),
+                      React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, textAlign: 'right' } }, formatDuration(row.durationMs) || '—'),
+                      React.createElement('td', { style: { padding: '6px 9px', color: row.ok ? colors.ok : colors.danger, whiteSpace: 'nowrap' } },
+                        row.ok ? t('usageOk') : t('usageFailed')),
+                    )),
+                  ),
+                ),
+              ),
+      );
+    });
+
     exports.name = name;
     exports.inject = inject;
     exports.apply = apply;
@@ -3146,6 +3295,7 @@ window.__ModuleLoader__.load({
       usageBadge,
       requestUsageSnapshot,
       UsagePill,
+      UsageDetailPage,
       RecommendationRow,
       USAGE_SORTS,
       DICT,

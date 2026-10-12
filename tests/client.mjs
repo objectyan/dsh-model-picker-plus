@@ -287,9 +287,12 @@ const ctx = {
 plugin.apply(ctx);
 check('registers locale dictionary', localeRegistered?.ns === 'model-picker-plus');
 check('injects the native model slot', injectedSlots.includes('conversation.input.model'), injectedSlots.join(','));
-check('exactly one single-slot registration', registrations.length === 1, `n=${registrations.length}`);
-const reg = registrations[0];
-check('registration targets conversation.input.model', reg.options.name === 'conversation.input.model');
+check('injects a settings page for the usage ledger', injectedSlots.includes('settings.section'), injectedSlots.join(','));
+// 主槽位必须是 conversation.input.model 那一个（设置页是列表型挂点，不该混进来）。
+const reg = registrations.find(r => r.options.name === 'conversation.input.model');
+check('exactly one single-slot registration', registrations.filter(r => r.options.name === 'conversation.input.model').length === 1,
+  `n=${registrations.filter(r => r.options.name === 'conversation.input.model').length}`);
+check('registration targets conversation.input.model', reg?.options.name === 'conversation.input.model');
 check('single-slot registration shadows the built-in', reg.options.priority === -1, String(reg.options.priority));
 check('single-slot registration has no list id', reg.options.id === undefined);
 const share = reg.options.inject('s1');
@@ -321,7 +324,9 @@ const applyWith = ({ directoryFor, subagentAddress, binding, remote }) => {
       sessions: { subagentAddress, ...(binding ? { binding } : {}) },
     }),
   });
-  return { options: regs[0].options, component: regs[0].component, inject: (id) => regs[0].options.inject(id) };
+  // 取模型选择器那个注册（注册表里可能还有设置页等列表型挂点）。
+  const modelReg = regs.find(r => r.options.name === 'conversation.input.model') ?? regs[0];
+  return { options: modelReg.options, component: modelReg.component, inject: (id) => modelReg.options.inject(id) };
 };
 const subagentFlap = applyWith({
   directoryFor: (sessionId) => sessionId === 's1' ? directory : undefined,
@@ -1171,7 +1176,33 @@ console.log('\n== 用量展示与排序 ==');
     !usagePill.includes('CapIcon') && !usagePill.includes('data-cap'));
   check('用量徽章无数据时不渲染', JSON.stringify(plugin.__test.UsagePill({ badge: null, t })) === 'null');
 
-  // ── 交互一致性：推荐行也必须整行可点 ────────────────────
+  // ── 设置页：用量明细表 ────────────────────────────────────
+  // 菜单里只放得下一枚胶囊；完整明细（时间/耗时/token/状态）需要单独一页。
+  // 挂在 settings.section（「每个条目一个设置页」的正式挂点）。
+  check('injects settings.section（设置页挂点）', injectedSlots.includes('settings.section'));
+  const settingsReg = registrations.find(r => r.options.name === 'settings.section');
+  check('注册了 settings.section 行', settingsReg !== undefined);
+  check('设置页有 id（列表型挂点必须带）', typeof settingsReg?.options?.id === 'string'
+    && settingsReg.options.id.length > 0, String(settingsReg?.options?.id));
+  check('设置页有 label', typeof settingsReg?.options?.label === 'function'
+    || typeof settingsReg?.options?.label === 'string');
+  check('设置页有 render', typeof settingsReg?.options?.render === 'function');
+
+  const { UsageDetailPage } = plugin.__test;
+  check('UsageDetailPage 已导出供测试驱动', typeof UsageDetailPage === 'function');
+  if (typeof UsageDetailPage === 'function') {
+    // 读不到 RPC / 表头字段 / 失败区分：这些是渲染细节，而测试替身的 React
+    // 不会跑 useEffect（异步取数根本不发生），所以读源码结构更可靠；
+    // 真实渲染效果在浏览器里验证。
+    const src = readFileSync(join(root, 'client.js'), 'utf8');
+    const page = src.slice(src.indexOf('const UsageDetailPage'), src.indexOf('exports.name'));
+    check('无 RPC 时报错而非空白', page.includes('Usage RPC'));
+    check('明细表包含表头字段', ['usageColTime', 'usageColProvider', 'usageColModel', 'usageColTokens', 'usageColDuration', 'usageColStatus']
+      .every(key => page.includes(key)));
+    check('明细表逐行呈现每一条请求', page.includes('rows.map'));
+    check('失败请求有区分标记', page.includes('usageFailed') && page.includes('row.ok'));
+  }
+
   // 用户不该记住「推荐页要点右边按钮、其它页点整行」这种不一致的规则。
   // 收藏星与「使用」按钮保留为独立控件（各自 stopPropagation），
   // 所以整行可点不会让它们失效。
