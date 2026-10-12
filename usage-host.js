@@ -202,8 +202,36 @@ export function apply(ctx, config = {}) {
       catch { writeErrors++; try { ctx.logger?.warn?.('model-picker-plus: usage write failed'); } catch {} }
     }));
   }
-  if (typeof ctx.inject === 'function') ctx.inject(['connection'], scope => registerUsageRpc(scope.connection, service));
-  else if (typeof ctx.get === 'function' && ctx.get('connection')) registerUsageRpc(ctx.get('connection'), service);
+  // RPC 注册：client 侧界面靠它读账本。安静失败会让界面永远没数据，
+  // 所以把结果写进 attach.log —— 「有没有注册上」必须可观测。
+  const note = (line) => {
+    try { appendFileSync(join(dir, 'attach.log'), `${line}\n`, 'utf8'); } catch { /* 诊断写不了就算了 */ }
+  };
+  note(`USAGE-APPLY ${new Date().toISOString()} on=${typeof ctx?.on} inject=${typeof ctx?.inject} get=${typeof ctx?.get}`);
+  const tryRegister = (connection, via) => {
+    if (!connection?.rpc?.intercept) { note(`RPC-SKIP connection via ${via} has no rpc.intercept`); return false; }
+    try {
+      registerUsageRpc(connection, service);
+      note(`RPC-OK registered model-picker-plus-usage/snapshot via ${via}`);
+      return true;
+    } catch (error) {
+      note(`RPC-FAIL ${via}: ${error?.message ?? error}`);
+      return false;
+    }
+  };
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['connection'], scope => {
+        tryRegister(scope?.connection, 'ctx.inject([connection])');
+      });
+    } catch (error) {
+      note(`RPC-INJECT-FAIL ${error?.message ?? error}`);
+    }
+  }
+  try {
+    const direct = typeof ctx.get === 'function' ? ctx.get('connection') : undefined;
+    if (direct) tryRegister(direct, 'ctx.get(connection)');
+  } catch { /* 上面 inject 路径已覆盖 */ }
   return service;
 }
 export const __test = { normalizeUsage, normalizeFinish, wrapStream, appendRecord, summarize, buildUsageIndex, totalOf, LEDGER_FILE };
