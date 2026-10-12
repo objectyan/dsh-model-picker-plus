@@ -16,7 +16,7 @@ const check = (label, ok, detail = '') => {
 /** client 侧读取器（与 client.js requestUsageSnapshot 同形）。 */
 async function requestUsageSnapshot(rpc, payload = {}, signal) {
   if (!rpc || typeof rpc.call !== 'function') throw new Error('Usage RPC connection unavailable');
-  const result = await rpc.call('/api', `${RPC_NAMESPACE}/snapshot`, payload, signal);
+  const result = await rpc.call(RPC_NAMESPACE, 'snapshot', payload, signal);
   if (!result?.ok) throw new Error(result?.error?.message ?? 'Usage RPC failed');
   const value = result.value;
   if (!value || value.schemaVersion !== 2 || !value.models || !Array.isArray(value.recent)) {
@@ -25,19 +25,18 @@ async function requestUsageSnapshot(rpc, payload = {}, signal) {
   return value;
 }
 
-/** 按真实协议接线：host 注册 intercept，client 的 rpc.call 送到它。 */
+/** 按真实协议接线：host 用 rpc.handle(命名通道) 注册，client 的 rpc.call 送到它。 */
 function wire(service) {
-  let matcher = null;
+  let channel = null;
   let handler = null;
   const connection = {
-    rpc: { intercept: (_channel, matches, h) => { matcher = matches; handler = h; return () => {}; } },
+    rpc: { handle: (name, h) => { channel = name; handler = h; return () => {}; } },
   };
   registerUsageRpc(connection, service);
   return {
     rpc: {
-      call: async (channel, endpoint, payload, signal) => {
-        if (channel !== '/api') throw new Error(`unexpected channel ${channel}`);
-        if (!matcher(endpoint)) throw new Error(`unmatched endpoint ${endpoint}`);
+      call: async (target, endpoint, payload, signal) => {
+        if (target !== channel) throw new Error(`unexpected channel ${target}`);
         return handler(endpoint, payload, signal, undefined);
       },
     },

@@ -165,20 +165,47 @@ export function readLedger(dir) {
   return rows.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
 }
 
+/**
+ * Register the usage snapshot endpoint on Connection.
+ *
+ * 用 `rpc.handle(通道名, ...)` 而不是 `rpc.intercept('/api', ...)`：
+ * `/api` 是**共享通道，只能有一个 interceptor**，而 antigravity 插件已经占用了它
+ * ——实测报错 `shared RPC channel "/api" already has an interceptor`。
+ * `handle` 按通道名注册，天然支持多方共存；认证/来源/peer 准入仍由 Connection 负责。
+ *
+ * 返回 true 表示注册成功，false 表示这个宿主没有可用的命名通道。
+ */
 export function registerUsageRpc(connection, service) {
-  // Connection applies its existing origin/auth/peer admission; no new server or unauthenticated route.
-  return connection.rpc.intercept('/api', endpoint => endpoint.startsWith(`${RPC_NAMESPACE}/`), async (endpoint, payload) => {
+  const handler = async (endpoint, payload) => {
     const fail = (code, message) => ({ ok: false, error: { code, message, details: {} } });
     if (!object(payload)) return fail('BAD_REQUEST', 'Expected an object');
     const allowed = ['sessionId', 'provider', 'model', 'limit'];
     if (Object.keys(payload).some(key => !allowed.includes(key))) return fail('BAD_REQUEST', 'Unknown query field');
-    for (const key of ['sessionId', 'provider', 'model']) if (payload[key] !== undefined && typeof payload[key] !== 'string') return fail('BAD_REQUEST', `Invalid ${key}`);
-    if (payload.limit !== undefined && (!Number.isSafeInteger(payload.limit) || payload.limit < 1 || payload.limit > 1000)) return fail('BAD_REQUEST', 'limit must be 1..1000');
+    for (const key of ['sessionId', 'provider', 'model']) {
+      if (payload[key] !== undefined && typeof payload[key] !== 'string') return fail('BAD_REQUEST', `Invalid ${key}`);
+    }
+    if (payload.limit !== undefined && (!Number.isSafeInteger(payload.limit) || payload.limit < 1 || payload.limit > 1000)) {
+      return fail('BAD_REQUEST', 'limit must be 1..1000');
+    }
     try {
-      if (endpoint === `${RPC_NAMESPACE}/snapshot`) return { ok: true, value: service.snapshot(payload) };
+      if (endpoint === `${RPC_NAMESPACE}/snapshot` || endpoint === 'snapshot') {
+        return { ok: true, value: service.snapshot(payload) };
+      }
       return fail('NOT_FOUND', 'Unknown usage endpoint');
     } catch { return fail('LEDGER_READ_FAILED', 'Could not read usage history'); }
-  });
+  };
+
+  const rpc = connection?.rpc;
+  if (typeof rpc?.handle === 'function') {
+    rpc.handle(RPC_NAMESPACE, handler);
+    return true;
+  }
+  // 兜底：极老宿主只有 intercept。会与其它插件争用 /api，成功则用、失败则由调用方记录。
+  if (typeof rpc?.intercept === 'function') {
+    rpc.intercept('/api', endpoint => endpoint.startsWith(`${RPC_NAMESPACE}/`), handler);
+    return true;
+  }
+  return false;
 }
 
 export function apply(ctx, config = {}) {
@@ -215,38 +242,47 @@ export function apply(ctx, config = {}) {
   };
   note(`USAGE-APPLY ${new Date().toISOString()} on=${typeof ctx?.on} inject=${typeof ctx?.inject} get=${typeof ctx?.get}`);
   const tryRegister = (connection, via) => {
-    if (!connection?.rpc?.intercept) { note(`RPC-SKIP connection via ${via} has no rpc.intercept`); return false; }
+    const hasHandle = typeof connection?.rpc?.handle === 'function';
+    const hasIntercept = typeof connection?.rpc?.intercept === 'function';
+    if (!hasHandle && !hasIntercept) { note(`RPC-SKIP connection via ${via} exposes no rpc.handle/intercept`); return false; }
     try {
-      registerUsageRpc(connection, service);
-      note(`RPC-OK registered model-picker-plus-usage/snapshot via ${via}`);
-      return true;
+      const ok = registerUsageRpc(connection, service);
+      note(ok
+        ? `RPC-OK handle(${RPC_NAMESPACE}) via ${via}${hasHandle ? '' : ' (fallback: /api intercept)'}`
+        : `RPC-SKIP ${via} reported no usable channel`);
+      return ok;
     } catch (error) {
       note(`RPC-FAIL ${via}: ${error?.message ?? error}`);
       return false;
     }
   };
-  // connection 不写进 inject（否则 connection 未就绪时整个插件挂不上），
-  // 改为运行时探测：拿到就注册 RPC，拿不到就先记日志，稍后重试一次。
-  if (typeof ctx.get === 'function') {
-    try {
-      const direct = ctx.get('connection');
-      if (direct) tryRegister(direct, 'ctx.get(connection)');
-      else note('RPC-PENDING connection not ready at apply time');
-    } catch (error) {
-      note(`RPC-GET-FAIL ${error?.message ?? error}`);
-    }
-  }
-  // 多数情况下 connection 在 apply 之后才就绪：用 cordis 的 effect/timer 再探一次。
-  const retry = () => {
+  // 注册成功后就不再重试，避免重复注册（handle 重复注册会互相覆盖）。
+  let registered = false;
+  const attempt = (via) => {
+    if (registered) return true;
     try {
       const conn = typeof ctx.get === 'function' ? ctx.get('connection') : undefined;
-      if (conn) tryRegister(conn, 'retry');
-    } catch { /* 仍不可用则保持无 RPC，界面静默降级 */ }
+      if (!conn) { note(`RPC-PENDING connection not ready (${via})`); return false; }
+      registered = tryRegister(conn, via);
+      return registered;
+    } catch (error) {
+      note(`RPC-GET-FAIL ${via}: ${error?.message ?? error}`);
+      return false;
+    }
   };
+  // connection 不写进 inject（否则 connection 未就绪时整个插件挂不上），
+  // 改为运行时探测：拿到就注册，拿不到就稍后重试。
+  attempt('apply');
+  // 多数情况下 connection 在 apply 之后才就绪：借用宿主的计时器再探一次。
+  // 用 ctx.setTimeout 而非全局 setTimeout —— 宿主 context 提供的是 fiber 效果，
+  // 插件卸载时会自动清理，不留悬挂定时器。
+  const retry = () => { attempt('retry'); };
   try {
-    if (typeof ctx.effect === 'function') ctx.effect(() => { const t = setTimeout(retry, 1500); return () => clearTimeout(t); }, 'model-picker-plus: usage RPC retry');
-    else setTimeout(retry, 1500).unref?.();
-  } catch { /* 拿不到 timer 就只靠 apply 时机那一次 */ }
+    if (typeof ctx.setTimeout === 'function') ctx.setTimeout(retry, 1500);
+    else if (typeof ctx.effect === 'function') {
+      ctx.effect(() => { const t = setTimeout(retry, 1500); return () => clearTimeout(t); }, 'model-picker-plus: usage RPC retry');
+    } else if (typeof setTimeout === 'function') setTimeout(retry, 1500).unref?.();
+  } catch { /* 拿不到计时器就只靠 apply 时机那一次 */ }
   return service;
 }
 export const __test = { normalizeUsage, normalizeFinish, wrapStream, appendRecord, summarize, buildUsageIndex, totalOf, LEDGER_FILE };

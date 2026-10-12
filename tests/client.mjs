@@ -1172,18 +1172,18 @@ console.log('\n== 用量展示与排序 ==');
   check('用量徽章无数据时不渲染', JSON.stringify(plugin.__test.UsagePill({ badge: null, t })) === 'null');
 
   // ── 用量快照走 Connection RPC（异步） ─────────────────────
-  // 这次的关键修正：之前是同步调用一个不存在的 remote 服务，
-  // 界面永远拿不到数据。现在走 host 用 connection.rpc.intercept 注册的
-  // `model-picker-plus-usage/snapshot`，且必须处理失败与取消。
+  // 之前是同步调用一个不存在的 remote 服务，界面永远拿不到数据。
+  // 现在走 host 用 `rpc.handle('model-picker-plus-usage', ...)` 注册的**命名通道**
+  // ——不用共享的 '/api'，那里只能有一个 interceptor，已被其它插件占用。
   const { requestUsageSnapshot } = plugin.__test;
   const okRpc = {
-    call: async (channel, endpoint, payload) => {
-      if (channel !== '/api' || endpoint !== 'model-picker-plus-usage/snapshot') throw new Error('wrong target');
+    call: async (channel, endpoint) => {
+      if (channel !== 'model-picker-plus-usage' || endpoint !== 'snapshot') throw new Error('wrong target');
       return { ok: true, value: { schemaVersion: 2, models: { 'p/m': { calls: 3 } }, recent: [] } };
     },
   };
   const snapshot = await requestUsageSnapshot(okRpc, { limit: 100 });
-  check('RPC 命中正确通道与端点并解包', snapshot.models['p/m'].calls === 3);
+  check('RPC 命中命名通道与端点并解包', snapshot.models['p/m'].calls === 3);
 
   const failRpc = { call: async () => ({ ok: false, error: { code: 'X', message: 'denied' } }) };
   let failMessage = '';
