@@ -1706,6 +1706,13 @@ window.__ModuleLoader__.load({
       // （界面不显示用量），绝不退化成「0 次」——那会让用户以为这个模型
       // 真的没用过。请求带 AbortSignal：菜单关闭即取消，不留悬挂请求。
       useEffect(() => {
+        // 无条件记录一次：这是「有没有走到读取」的分水岭。
+        // 之前只在失败时打日志，结果分不清「没触发」和「触发后失败」。
+        try {
+          if (localStorage.getItem('__mpDebugUsage') === '1') {
+            console.log('[mp-usage-effect]', `open=${open} hasReader=${typeof readUsageSnapshot === 'function'}`);
+          }
+        } catch { /* 诊断本身不影响主流程 */ }
         if (!open) return undefined;
         if (typeof readUsageSnapshot !== 'function') return undefined;
         const controller = typeof AbortController === 'function' ? new AbortController() : null;
