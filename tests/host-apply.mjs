@@ -154,6 +154,62 @@ console.log('\n== apply 在真实 ctx 上订阅两条 route ==');
   }
 }
 
+console.log('\n== 双路径去重：同一次调用只记一条 ==');
+{
+  // 实测两条路都会触发（llm/stream + session/event），token 数完全相同。
+  // 不去重则每次调用记两遍，统计直接翻倍。
+  const dir = mkdtempSync(join(tmpdir(), 'mp-dedupe-'));
+  try {
+    const { apply: mount } = await import('../index.js');
+    const subs = [];
+    const ctx = {
+      get: (key) => (key === 'storage' ? { dataDir: dir } : undefined),
+      logger: { warn: () => {} },
+      on: (ev, cb) => { subs.push({ ev, cb }); },
+    };
+    mount(ctx);
+    const streamSub = subs.find(s => s.ev === 'llm/stream');
+    const eventSub = subs.find(s => s.ev === 'session/event');
+    check('两条订阅都在', streamSub !== undefined && eventSub !== undefined);
+
+    const usage = { inputTokens: 100, outputTokens: 20, cacheReadTokens: 500, totalTokens: 620 };
+    const ledgerDir = join(dir, 'dsh-model-picker-plus');
+
+    // 1) llm/stream 记一条
+    const iterable = streamSub.cb(
+      { provider: 'p', model: 'm', sessionId: 's1' },
+      () => (async function* () {
+        yield { type: 'usage', usage };
+        yield { type: 'finish', reason: { kind: 'stop' } };
+      })(),
+    );
+    for await (const _ of iterable) { /* 驱动完 */ }
+    check('stream 路径落一条', readLedger(ledgerDir).length === 1, `n=${readLedger(ledgerDir).length}`);
+
+    // 2) 同一次调用的 session/event 跟上：必须被丢弃
+    eventSub.cb({ id: 's1' }, {
+      type: 'assistant/message',
+      data: { usage, message: { source: { provider: 'p', model: 'm' } } },
+    });
+    check('同一次调用的事件路径被去重', readLedger(ledgerDir).length === 1,
+      `n=${readLedger(ledgerDir).length}`);
+
+    // 3) token 数不同的另一次调用：必须照常记
+    const iterable2 = streamSub.cb(
+      { provider: 'p', model: 'm', sessionId: 's1' },
+      () => (async function* () {
+        yield { type: 'usage', usage: { ...usage, inputTokens: 999 } };
+        yield { type: 'finish', reason: { kind: 'stop' } };
+      })(),
+    );
+    for await (const _ of iterable2) { /* 驱动完 */ }
+    check('不同 token 数的调用不被误删', readLedger(ledgerDir).length === 2,
+      `n=${readLedger(ledgerDir).length}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 console.log('\n== 记账失败不影响调用结果 ==');
 {
   // 账本目录不可写时，调用结果必须照常返回。

@@ -312,11 +312,49 @@ export function apply(ctx, _config = {}) {
 
   const record = (row) => appendRecord(ledgerDir, row);
 
+  // ── 去重 ────────────────────────────────────────────────────
+  //
+  // 两条路径覆盖的是**同一次调用**：llm/stream 在请求外包一层，session/event
+  // 在会话日志落定后再报一次。实测两者都会触发，token 数完全相同——不去重
+  // 就会把每次调用记两遍，统计直接翻倍。
+  //
+  // 判据用「provider|model|各 token 数」做指纹：同一次调用的两条记录 payload
+  // 一致，而相邻两次真实调用的 token 数几乎不可能完全相同（提示词长度会变）。
+  // 指纹只保留最近一小段（环形），避免长期运行内存增长。
+  const seen = new Map(); // fingerprint -> 时间戳
+  const SEEN_TTL_MS = 120000;
+  const fingerprintOf = (row) => [
+    row?.provider ?? '', row?.model ?? '',
+    row?.inputTokens ?? '', row?.outputTokens ?? '',
+    row?.cacheReadTokens ?? '', row?.cacheWriteTokens ?? '',
+    row?.totalTokens ?? '',
+  ].join('|');
+  /** @returns true 表示这条应被丢弃（重复）。 */
+  const isDuplicate = (row) => {
+    const key = fingerprintOf(row);
+    const now = Date.now();
+    // 顺手清理过期的，保持 Map 很小。
+    for (const [k, at] of seen) if (now - at > SEEN_TTL_MS) seen.delete(k);
+    if (seen.has(key)) return true;
+    seen.set(key, now);
+    return false;
+  };
+
+  const recordStream = (row) => {
+    if (isDuplicate(row)) return;
+    record(row);
+  };
+  const recordEvent = (row) => {
+    // 事件路径总是后到；若 stream 已经记过同一次调用，这里直接跳过。
+    if (isDuplicate(row)) return;
+    record(row);
+  };
+
   // 订阅 waterfall：每次流式调用都经过这里，带 provider/model 与完整 usage。
   // 真实 context 上无需任何作用域技巧（官方 antigravity 同样直接 ctx.on）。
   try {
     ctx.on('llm/stream', (options, next) => {
-      return wrapStream(options, next, record);
+      return wrapStream(options, next, recordStream);
     });
     noteTo(ledgerDir, 'OK: subscribed llm/stream');
   } catch (error) {
@@ -327,7 +365,7 @@ export function apply(ctx, _config = {}) {
   // 覆盖 llm/stream 因宿主差异漏掉的情况。
   try {
     ctx.on('session/event', (session, event) => {
-      try { observeSessionEvent(session, event, record); } catch { /* 观测失败不影响会话 */ }
+      try { observeSessionEvent(session, event, recordEvent); } catch { /* 观测失败不影响会话 */ }
     });
     noteTo(ledgerDir, 'OK: subscribed session/event');
   } catch (error) {
