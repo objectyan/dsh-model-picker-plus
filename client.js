@@ -649,14 +649,15 @@ window.__ModuleLoader__.load({
 
     // Authenticated Connection RPC, registered by the Host-only /usage half.
     //
-    // 通道名就是命名空间本身（host 侧用 rpc.handle(RPC_NAMESPACE, ...) 注册）。
-    // 不用共享的 '/api'：它只能挂一个 interceptor，已被其它插件占用
-    // （实测报错 shared RPC channel "/api" already has an interceptor）。
-    const USAGE_RPC_CHANNEL = 'model-picker-plus-usage';
+    // host 侧用 `connection.fetch.register({ path: '/api/<ns>/<endpoint>' })`
+    // 注册**精确 Fetch 路由**（官方 dsh-tool-antigravity 同款），所以这里
+    // 走共享的 '/api' 通道 + 完整方法名。不是 rpc.handle 的命名通道——
+    // 那个要求通道名以 '/' 开头，语义也不同（实测报 invalid or reserved）。
+    const USAGE_RPC_METHOD = 'model-picker-plus-usage/snapshot';
 
     async function requestUsageSnapshot(rpc, payload = {}, signal) {
       if (!rpc || typeof rpc.call !== 'function') throw new Error('Usage RPC connection unavailable');
-      const result = await rpc.call(USAGE_RPC_CHANNEL, 'snapshot', payload, signal);
+      const result = await rpc.call('/api', USAGE_RPC_METHOD, payload, signal);
       if (!result?.ok) throw new Error(result?.error?.message ?? 'Usage RPC failed');
       const value = result.value;
       if (!value || value.schemaVersion !== 2 || !value.models || !Array.isArray(value.recent)) {

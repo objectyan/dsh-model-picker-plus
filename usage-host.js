@@ -168,16 +168,25 @@ export function readLedger(dir) {
 /**
  * Register the usage snapshot endpoint on Connection.
  *
- * 用 `rpc.handle(通道名, ...)` 而不是 `rpc.intercept('/api', ...)`：
- * `/api` 是**共享通道，只能有一个 interceptor**，而 antigravity 插件已经占用了它
- * ——实测报错 `shared RPC channel "/api" already has an interceptor`。
- * `handle` 按通道名注册，天然支持多方共存；认证/来源/peer 准入仍由 Connection 负责。
+ * 用 `connection.fetch.register({ path: '/api/<ns>/<endpoint>', ... })`，
+ * 与官方可工作的 dsh-tool-antigravity 同款。踩过的两条错路：
+ *   · `rpc.intercept('/api', ...)` —— 共享通道只能有一个 interceptor，
+ *     已被 antigravity 占用 → `already has an interceptor`；
+ *   · `rpc.handle('name', ...)` —— 通道名必须以 `/` 开头
+ *     （CHANNEL_PATTERN = /^\/[A-Za-z0-9._~-]+$/）→ `invalid or reserved RPC channel`。
+ * 精确 Fetch 路由天然支持多方共存（只有 path 完全相同才冲突），
+ * 认证 / 来源检查 / peer 准入仍由 Connection 负责，不新开未认证路由。
  *
- * 返回 true 表示注册成功，false 表示这个宿主没有可用的命名通道。
+ * 返回 true 表示注册成功，false 表示宿主没有可用的 Fetch 通道。
  */
 export function registerUsageRpc(connection, service) {
-  const handler = async (endpoint, payload) => {
+  const endpoint = 'snapshot';
+  const method = `${RPC_NAMESPACE}/${endpoint}`;
+
+  const handle = async (requestedMethod, payload) => {
     const fail = (code, message) => ({ ok: false, error: { code, message, details: {} } });
+    // method 必须与本路由一致，避免被当成别的端点的入口。
+    if (requestedMethod !== method) return fail('BAD_REQUEST', 'Method does not match its endpoint');
     if (!object(payload)) return fail('BAD_REQUEST', 'Expected an object');
     const allowed = ['sessionId', 'provider', 'model', 'limit'];
     if (Object.keys(payload).some(key => !allowed.includes(key))) return fail('BAD_REQUEST', 'Unknown query field');
@@ -188,24 +197,34 @@ export function registerUsageRpc(connection, service) {
       return fail('BAD_REQUEST', 'limit must be 1..1000');
     }
     try {
-      if (endpoint === `${RPC_NAMESPACE}/snapshot` || endpoint === 'snapshot') {
-        return { ok: true, value: service.snapshot(payload) };
-      }
-      return fail('NOT_FOUND', 'Unknown usage endpoint');
+      return { ok: true, value: service.snapshot(payload) };
     } catch { return fail('LEDGER_READ_FAILED', 'Could not read usage history'); }
   };
 
-  const rpc = connection?.rpc;
-  if (typeof rpc?.handle === 'function') {
-    rpc.handle(RPC_NAMESPACE, handler);
-    return true;
-  }
-  // 兜底：极老宿主只有 intercept。会与其它插件争用 /api，成功则用、失败则由调用方记录。
-  if (typeof rpc?.intercept === 'function') {
-    rpc.intercept('/api', endpoint => endpoint.startsWith(`${RPC_NAMESPACE}/`), handler);
-    return true;
-  }
-  return false;
+  const fetch = connection?.fetch;
+  if (typeof fetch?.register !== 'function') return false;
+  fetch.register({
+    path: `/api/${RPC_NAMESPACE}/${endpoint}`,
+    methods: ['POST'],
+    requestBody: 'buffered',
+    fetch: async (request) => {
+      if (request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/json') {
+        return new Response('content type must be application/json', { status: 415 });
+      }
+      let body;
+      try { body = await request.json(); } catch { return new Response('invalid JSON', { status: 400 }); }
+      const rpcId = body?.rpcId;
+      if (body?.type !== 'client-request' || typeof rpcId !== 'string') {
+        return new Response('invalid usage request', { status: 400 });
+      }
+      let result;
+      try { result = await handle(body.method, body.payload); }
+      catch { result = { ok: false, error: { code: 'INTERNAL', message: 'Usage request failed', details: {} } }; }
+      // 响应信封必须回同一个 rpcId —— client 会校验一致性。
+      return Response.json({ type: 'server-response', rpcId, result });
+    },
+  });
+  return true;
 }
 
 export function apply(ctx, config = {}) {
@@ -242,14 +261,13 @@ export function apply(ctx, config = {}) {
   };
   note(`USAGE-APPLY ${new Date().toISOString()} on=${typeof ctx?.on} inject=${typeof ctx?.inject} get=${typeof ctx?.get}`);
   const tryRegister = (connection, via) => {
-    const hasHandle = typeof connection?.rpc?.handle === 'function';
-    const hasIntercept = typeof connection?.rpc?.intercept === 'function';
-    if (!hasHandle && !hasIntercept) { note(`RPC-SKIP connection via ${via} exposes no rpc.handle/intercept`); return false; }
+    const hasFetch = typeof connection?.fetch?.register === 'function';
+    if (!hasFetch) { note(`RPC-SKIP connection via ${via} exposes no fetch.register`); return false; }
     try {
       const ok = registerUsageRpc(connection, service);
       note(ok
-        ? `RPC-OK handle(${RPC_NAMESPACE}) via ${via}${hasHandle ? '' : ' (fallback: /api intercept)'}`
-        : `RPC-SKIP ${via} reported no usable channel`);
+        ? `RPC-OK fetch.register(/api/${RPC_NAMESPACE}/snapshot) via ${via}`
+        : `RPC-SKIP ${via} reported no usable fetch channel`);
       return ok;
     } catch (error) {
       note(`RPC-FAIL ${via}: ${error?.message ?? error}`);

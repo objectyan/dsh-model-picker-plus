@@ -235,44 +235,68 @@ console.log('\n== RPC：注册与入参校验 ==');
   try {
     appendRecord(dir, { provider: 'p', model: 'm', requestId: 'r1', sessionId: 's1', ok: true, inputTokens: 10, outputTokens: 2, usageReported: true });
     const calls = [];
-    let handleChannel = null;
+    let registeredPath = null;
+    let route = null;
     const connection = {
-      rpc: {
-        handle(channel, handler) {
-          handleChannel = channel;
-          capturedHandler = handler;
+      fetch: {
+        register(spec) {
+          registeredPath = spec.path;
+          route = spec;
           return () => {};
         },
-        // /api 的 interceptor 已被其它插件占用：这里模拟真实宿主，
-        // 一旦本插件去 intercept 就抛错，确保实现不会退回那条路。
+      },
+      // 干扰项：共享通道与命名通道都走不通（前者被占用、后者名字非法），
+      // 确保实现用的是 fetch.register 这条官方路径。
+      rpc: {
         intercept() { throw new Error('connection: shared RPC channel "/api" already has an interceptor'); },
+        handle() { throw new Error('connection: invalid or reserved RPC channel "x"'); },
       },
     };
     const service = { snapshot: (query) => ({ schemaVersion: 2, models: buildUsageIndex(readLedger(dir)), recent: [], status: { query } }) };
     const ok = registerUsageRpc(connection, service);
 
-    check('用命名通道 handle 注册（不占用共享 /api）', ok === true && handleChannel === RPC_NAMESPACE, String(handleChannel));
-    check('/api 被占用也不影响本插件注册', ok === true);
+    check('用 fetch.register 注册精确路由（官方同款）', ok === true);
+    check('路由路径为 /api/<ns>/snapshot', registeredPath === `/api/${RPC_NAMESPACE}/snapshot`, String(registeredPath));
+    check('只接受 POST + buffered body', route?.methods?.join(',') === 'POST' && route?.requestBody === 'buffered');
 
-    // 入参校验：越权/未知字段一律拒绝。
-    const unknown = await capturedHandler('snapshot', { evil: 1 });
-    check('拒绝未知查询字段', unknown.ok === false && unknown.error.code === 'BAD_REQUEST');
-    const badLimit = await capturedHandler('snapshot', { limit: 99999 });
-    check('拒绝越界 limit', badLimit.ok === false);
-    const notFound = await capturedHandler('nope', {});
-    check('未知端点返回 NOT_FOUND', notFound.ok === false && notFound.error.code === 'NOT_FOUND');
-    const good = await capturedHandler('snapshot', { sessionId: 's1' });
-    check('正常查询返回快照', good.ok === true && good.value.schemaVersion === 2);
-    check('快照不含 prompt/响应正文', JSON.stringify(good.value).includes('messages') === false);
+    // 走真实信封：client 发 { type:'client-request', rpcId, method, payload }
+    const callRoute = async (body, contentType = 'application/json') => {
+      const request = {
+        headers: { get: (k) => (k.toLowerCase() === 'content-type' ? contentType : null) },
+        json: async () => body,
+        signal: undefined,
+      };
+      const response = await route.fetch(request);
+      const text = await response.text();
+      // 非 2xx 走纯文本错误体（与官方 antigravity 一致），只有成功/业务失败才是 JSON。
+      let parsed = null;
+      try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
+      return { status: response.status, body: parsed, text };
+    };
 
-    // 老宿主只有 intercept 时的兜底路径仍要能工作。
-    const legacyCalls = [];
-    const legacy = { rpc: { intercept: (channel, matches, handler) => { legacyCalls.push({ channel, matches, handler }); return () => {}; } } };
-    check('无 handle 时退回 intercept 兜底', registerUsageRpc(legacy, service) === true
-      && legacyCalls[0]?.channel === '/api');
-    check('兜底只匹配自己的命名空间',
-      legacyCalls[0].matches(`${RPC_NAMESPACE}/snapshot`) === true
-      && legacyCalls[0].matches('other/snapshot') === false);
+    const good = await callRoute({ type: 'client-request', rpcId: 'r1', method: `${RPC_NAMESPACE}/snapshot`, payload: { sessionId: 's1' } });
+    check('正常请求回 server-response 且 rpcId 一致',
+      good.body?.type === 'server-response' && good.body.rpcId === 'r1' && good.body.result.ok === true);
+    check('快照经 RPC 返回', good.body.result.value.schemaVersion === 2);
+    check('快照不含 prompt/响应正文', JSON.stringify(good.body.result.value).includes('messages') === false);
+
+    const badMethod = await callRoute({ type: 'client-request', rpcId: 'r2', method: 'other/thing', payload: {} });
+    check('method 不匹配时拒绝', badMethod.body.result.ok === false && badMethod.body.result.error.code === 'BAD_REQUEST');
+
+    const badPayload = await callRoute({ type: 'client-request', rpcId: 'r3', method: `${RPC_NAMESPACE}/snapshot`, payload: { evil: 1 } });
+    check('拒绝未知查询字段', badPayload.body.result.ok === false);
+
+    const badLimit = await callRoute({ type: 'client-request', rpcId: 'r4', method: `${RPC_NAMESPACE}/snapshot`, payload: { limit: 99999 } });
+    check('拒绝越界 limit', badLimit.body.result.ok === false);
+
+    const badEnvelope = await callRoute({ hello: 'world' });
+    check('信封非法时返回 400', badEnvelope.status === 400);
+
+    const badType = await callRoute({ type: 'client-request', rpcId: 'r5', method: `${RPC_NAMESPACE}/snapshot`, payload: {} }, 'text/plain');
+    check('非 JSON content-type 返回 415', badType.status === 415);
+
+    check('未注册 fetch 的宿主返回 false（不抛错）',
+      registerUsageRpc({ rpc: {} }, service) === false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -347,14 +371,15 @@ console.log('\n== apply：订阅与降级 ==');
     check('connection 未就绪时用 ctx.inject 等待（不阻塞挂载）',
       Array.isArray(injectDeps) && injectDeps.includes('connection'), JSON.stringify(injectDeps));
 
-    // 依赖就绪后回调：此时应真正注册到命名通道。
-    let lateChannel = null;
+    // 依赖就绪后回调：此时应真正注册到精确 Fetch 路由。
+    let latePath = null;
     if (typeof injectCallback === 'function') {
       injectCallback({
-        connection: { rpc: { handle: (name) => { lateChannel = name; return () => {}; } } },
+        connection: { fetch: { register: (spec) => { latePath = spec.path; return () => {}; } } },
       });
     }
-    check('依赖就绪后注册到命名通道', lateChannel === RPC_NAMESPACE, String(lateChannel));
+    check('依赖就绪后注册到精确 Fetch 路由',
+      latePath === `/api/${RPC_NAMESPACE}/snapshot`, String(latePath));
 
     // 账本目录不可写也不能抛：采集是旁路功能，不能拖垮插件加载。
     let badDirThrew = null;

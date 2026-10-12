@@ -16,7 +16,7 @@ const check = (label, ok, detail = '') => {
 /** client 侧读取器（与 client.js requestUsageSnapshot 同形）。 */
 async function requestUsageSnapshot(rpc, payload = {}, signal) {
   if (!rpc || typeof rpc.call !== 'function') throw new Error('Usage RPC connection unavailable');
-  const result = await rpc.call(RPC_NAMESPACE, 'snapshot', payload, signal);
+  const result = await rpc.call('/api', 'model-picker-plus-usage/snapshot', payload, signal);
   if (!result?.ok) throw new Error(result?.error?.message ?? 'Usage RPC failed');
   const value = result.value;
   if (!value || value.schemaVersion !== 2 || !value.models || !Array.isArray(value.recent)) {
@@ -25,19 +25,26 @@ async function requestUsageSnapshot(rpc, payload = {}, signal) {
   return value;
 }
 
-/** 按真实协议接线：host 用 rpc.handle(命名通道) 注册，client 的 rpc.call 送到它。 */
+/** 按真实协议接线：host 用 fetch.register 注册精确路由，client 经 /api 调它。 */
 function wire(service) {
-  let channel = null;
-  let handler = null;
-  const connection = {
-    rpc: { handle: (name, h) => { channel = name; handler = h; return () => {}; } },
-  };
+  let path = null;
+  let route = null;
+  const connection = { fetch: { register: (spec) => { path = spec.path; route = spec; return () => {}; } } };
   registerUsageRpc(connection, service);
   return {
     rpc: {
-      call: async (target, endpoint, payload, signal) => {
-        if (target !== channel) throw new Error(`unexpected channel ${target}`);
-        return handler(endpoint, payload, signal, undefined);
+      call: async (channel, method, payload, signal) => {
+        if (channel !== '/api') throw new Error(`unexpected channel ${channel}`);
+        if (path !== `/api/${method}`) throw new Error(`unmatched route ${method}`);
+        // 按真实信封走一遍 route.fetch，确保两端协议一致。
+        const request = {
+          headers: { get: (k) => (k.toLowerCase() === 'content-type' ? 'application/json' : null) },
+          json: async () => ({ type: 'client-request', rpcId: 'wire-1', method, payload }),
+          signal,
+        };
+        const response = await route.fetch(request);
+        const body = await response.json();
+        return body.result;
       },
     },
   };
