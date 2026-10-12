@@ -1171,6 +1171,43 @@ console.log('\n== 用量展示与排序 ==');
     !usagePill.includes('CapIcon') && !usagePill.includes('data-cap'));
   check('用量徽章无数据时不渲染', JSON.stringify(plugin.__test.UsagePill({ badge: null, t })) === 'null');
 
+  // ── 交互一致性：推荐行也必须整行可点 ────────────────────
+  // 用户不该记住「推荐页要点右边按钮、其它页点整行」这种不一致的规则。
+  // 收藏星与「使用」按钮保留为独立控件（各自 stopPropagation），
+  // 所以整行可点不会让它们失效。
+  const { RecommendationRow } = plugin.__test;
+  check('RecommendationRow 已导出供测试驱动', typeof RecommendationRow === 'function');
+  if (typeof RecommendationRow === 'function') {
+    let picked = 0;
+    let favorited = 0;
+    const row = { group: { id: 'p', name: 'P' }, model: { id: 'm', name: 'M' } };
+    const node = RecommendationRow({
+      row, current: null, favoriteSet: new Set(),
+      toggleFavorite: () => { favorited += 1; },
+      choose: () => { picked += 1; },
+      busy: false, task: 'code', t,
+    });
+    const json = JSON.stringify(node);
+    check('推荐行是 data-model-option（与其它视图一致）', json.includes('"data-model-option"'));
+    check('推荐行有 role=button 与 tabIndex',
+      node.props.role === 'button' && node.props.tabIndex === 0);
+    // 键盘可达性：JSON.stringify 会丢函数，必须直接查 props。
+    check('推荐行有键盘可达（Enter/Space）', typeof node.props.onKeyDown === 'function');
+    // 点整行 → 选中模型
+    node.props.onClick({ stopPropagation() {} });
+    check('点整行即选中模型', picked === 1, `picked=${picked}`);
+    check('点整行不会误收藏', favorited === 0, `favorited=${favorited}`);
+    // 「使用」按钮仍然可用：直接查源码结构（测试替身会把函数组件展开成
+    // 扁平 props，无法反映真实 React 树的嵌套，所以这里读源码更可靠）。
+    const src = readFileSync(join(root, 'client.js'), 'utf8');
+    const recRegion = src.slice(src.indexOf('RecommendationRow = memo'), src.indexOf('function ModelPickerPlus'));
+    check('推荐行源码里保留了「使用」按钮', recRegion.includes('useModel'));
+    check('推荐行源码里保留了收藏星', recRegion.includes('addFavorite'));
+    // 收藏星与「使用」必须 stopPropagation，否则整行可点会连带触发它们。
+    check('推荐行的收藏星 stopPropagation', /onClick: \(event\) => \{ event\.stopPropagation\(\); toggleFavorite/.test(recRegion));
+    check('推荐行的「使用」按钮 stopPropagation', /'data-model-option': 'true',\s*\n\s*onClick: \(event\) => \{ event\.stopPropagation\(\)/.test(recRegion));
+  }
+
   // ── 用量快照走 Connection RPC（异步） ─────────────────────
   // 之前是同步调用一个不存在的 remote 服务，界面永远拿不到数据。
   // 现在 host 用 `connection.fetch.register({ path: '/api/<ns>/snapshot' })`

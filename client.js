@@ -1553,7 +1553,24 @@ window.__ModuleLoader__.load({
         hasToolsModel(model) ? { cap: 'tools', label: t('tools') } : null,
         isFreeModel(group, model) ? { cap: 'free', label: t('free') } : null,
       ].filter(Boolean).slice(0, 3);
+      // 整行可点：与其它视图的 ModelRow 行为一致——用户不该记住
+      // 「推荐页要点右边按钮、其它页点整行」这种不一致的规则。
+      // 收藏星与「使用」按钮仍然是独立控件，不会因为整行可点而失效
+      // （它们各自的 onClick 会调用 stopPropagation）。
+      const pickModel = (event) => {
+        event?.stopPropagation?.();
+        if (busy) return;
+        choose(selectionFor(group, model, current));
+      };
       return React.createElement('div', {
+        role: 'button',
+        tabIndex: 0,
+        'data-model-option': 'true',
+        'aria-current': selected ? 'true' : undefined,
+        onClick: pickModel,
+        onKeyDown: (event) => {
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); pickModel(event); }
+        },
         onMouseEnter: (event) => {
           if (selected) return;
           event.currentTarget.style.background = colors.hoverBg;
@@ -1566,6 +1583,7 @@ window.__ModuleLoader__.load({
         },
         style: {
           display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', marginBottom: '2px',
+          cursor: busy ? 'default' : 'pointer',
           borderRadius: '10px', border: `1px solid ${selected ? tint(colors.accent, 35) : 'transparent'}`,
           background: selected ? tint(colors.accent, 9) : 'transparent',
           boxShadow: selected ? `inset 3px 0 0 ${colors.accent}` : 'none',
@@ -1587,13 +1605,15 @@ window.__ModuleLoader__.load({
             title: favoriteSet.has(key) ? t('removeFavorite') : t('addFavorite'),
             'aria-label': favoriteSet.has(key) ? t('removeFavorite') : t('addFavorite'),
             'aria-pressed': favoriteSet.has(key),
-            onClick: () => toggleFavorite(key),
+            onClick: (event) => { event.stopPropagation(); toggleFavorite(key); },
             onMouseEnter: (event) => { event.currentTarget.style.color = '#f5c542'; },
             onMouseLeave: (event) => { event.currentTarget.style.color = favoriteSet.has(key) ? '#f5c542' : colors.muted; },
             style: { border: 'none', background: 'transparent', color: favoriteSet.has(key) ? '#f5c542' : colors.muted, cursor: 'pointer', fontSize: '16px', padding: '5px', lineHeight: 1, transition: 'color .15s' },
           }, favoriteSet.has(key) ? '★' : '☆'),
           React.createElement('button', {
-            type: 'button', 'data-model-option': 'true', onClick: () => choose(selectionFor(group, model, current)), disabled: busy,
+            type: 'button', 'data-model-option': 'true',
+            onClick: (event) => { event.stopPropagation(); if (busy) return; choose(selectionFor(group, model, current)); },
+            disabled: busy,
             style: { padding: '5px 9px', borderRadius: '6px', border: `1px solid ${selected ? colors.ok : colors.accent}`, background: selected ? tint(colors.ok, 9) : tint(colors.accent, 9), color: selected ? colors.ok : colors.accent, cursor: busy ? 'default' : 'pointer', fontSize: '11px', whiteSpace: 'nowrap' },
           }, t('useModel')),
         ),
@@ -3126,6 +3146,7 @@ window.__ModuleLoader__.load({
       usageBadge,
       requestUsageSnapshot,
       UsagePill,
+      RecommendationRow,
       USAGE_SORTS,
       DICT,
     };
