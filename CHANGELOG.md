@@ -4,6 +4,50 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0-alpha.2] - 2026-10-12
+
+**逐请求使用账本：接通真实 RPC，并修正两处会算错数的逻辑。**
+
+0.6.0-alpha.1 只做到「账本能写」，但界面读不到——那条链路当时是假的（client 同步
+调用一个从未注册的 remote 服务，测试里也是模拟的）。本版把它做实。
+
+### 修复
+
+- **采集入口拆成独立插件**（`dsh-model-picker-plus/usage`）。此前采集逻辑挂在包根，
+  而包根同时承担 Client 半边：根一缺依赖就整个挂不上，Client 也跟着失效。
+  现在根保持 no-op，采集是 `cordis.patch.yml` 里独立一行，依赖声明互不牵连。
+- **界面读取改走真实 Connection RPC**：host 用 `connection.rpc.intercept('/api', ...)`
+  注册 `model-picker-plus-usage/snapshot`，复用 DSH 自己的 origin/认证/peer 准入，
+  不新开路由、不绕过鉴权。client 端改为**异步**读取并支持 `AbortSignal`
+  （菜单关闭即取消，不留悬挂请求）。
+- **去重不再靠 token 指纹**：旧版用「provider|model|各 token 数」判定重复，
+  会把**用量恰好相同的两次真实调用**误删。现在每条记录带唯一 `requestId`，
+  只有同一个 requestId 才去重；相同 token 数的不同请求照常记录。
+- **不再双路记账**：同一调用原本会被 `llm/stream` 与 `session/event` 各记一次。
+  现在只以 `llm/stream` 为准（带精确耗时），彻底消除重复来源。
+- **token 合计口径**：`reasoningTokens` 是 `outputTokens` 的子集，旧口径会把它再加一遍
+  导致总量偏大。现在优先采用上游 `totalTokens`，否则按 input+output+cache 求和，
+  并标记该合计是否精确（缺字段时为非精确，界面据此不冒充精确值）。
+- **轮转不再删历史**：旧版超过阈值会把账本重命名为 `.1` 并**覆盖**已有归档。
+  现在归档名带时间戳与随机串，历史只增不减；且写入前补齐撕裂的尾行，
+  损坏行不会吞掉后续记录。
+
+### 新增
+
+- **逐请求唯一 ID 与精确耗时**：每条记录含 `requestId`、`durationMs`、
+  `timeToFirstTokenMs`（首字节延迟）与 `timezoneOffsetMinutes`（便于按时段分析）。
+- **采集状态可见**：快照带 `status.collecting` / `persistedCalls` / `writeErrors` /
+  `recordCount`，界面可判定「尚未开始采集」而不是把空账本显示成「用了 0 次」。
+- **隐私边界明确**：账本只存归属、时间、用量与结束状态，**绝不落盘**提示词、
+  响应正文或凭据；失败记录只保留错误码与 HTTP 状态，不复制原始 message
+  （它可能内嵌请求体）。测试里有对应断言。
+
+### 已知局限
+
+- 采集从启用时开始，**此前的历史用量无法补录**（宿主不提供按模型的历史查询）。
+- 官方 `tokenUsage` 投影是**会话级总量**，不带 provider/model 维度，
+  因此按模型拆分只能靠本插件自己记账。
+
 ## [0.6.0-alpha.1] - 2026-10-10
 
 **逐请求的 LLM 使用账本（host 侧）** —— 新增能力，尚待真实环境验证，故走 alpha 通道。

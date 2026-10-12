@@ -1170,6 +1170,39 @@ console.log('\n== 用量展示与排序 ==');
   check('用量徽章与能力胶囊视觉区分（不占用能力色）',
     !usagePill.includes('CapIcon') && !usagePill.includes('data-cap'));
   check('用量徽章无数据时不渲染', JSON.stringify(plugin.__test.UsagePill({ badge: null, t })) === 'null');
+
+  // ── 用量快照走 Connection RPC（异步） ─────────────────────
+  // 这次的关键修正：之前是同步调用一个不存在的 remote 服务，
+  // 界面永远拿不到数据。现在走 host 用 connection.rpc.intercept 注册的
+  // `model-picker-plus-usage/snapshot`，且必须处理失败与取消。
+  const { requestUsageSnapshot } = plugin.__test;
+  const okRpc = {
+    call: async (channel, endpoint, payload) => {
+      if (channel !== '/api' || endpoint !== 'model-picker-plus-usage/snapshot') throw new Error('wrong target');
+      return { ok: true, value: { schemaVersion: 2, models: { 'p/m': { calls: 3 } }, recent: [] } };
+    },
+  };
+  const snapshot = await requestUsageSnapshot(okRpc, { limit: 100 });
+  check('RPC 命中正确通道与端点并解包', snapshot.models['p/m'].calls === 3);
+
+  const failRpc = { call: async () => ({ ok: false, error: { code: 'X', message: 'denied' } }) };
+  let failMessage = '';
+  try { await requestUsageSnapshot(failRpc); } catch (error) { failMessage = String(error?.message ?? error); }
+  check('RPC 失败时抛错（不静默当成 0）', failMessage.includes('denied'), failMessage);
+
+  const badShape = { call: async () => ({ ok: true, value: { schemaVersion: 1 } }) };
+  let shapeMessage = '';
+  try { await requestUsageSnapshot(badShape); } catch (error) { shapeMessage = String(error?.message ?? error); }
+  check('版本/结构不符时拒绝（避免误读旧格式）', shapeMessage.includes('Invalid usage response'), shapeMessage);
+
+  let noConn = '';
+  try { await requestUsageSnapshot(null); } catch (error) { noConn = String(error?.message ?? error); }
+  check('没有 RPC 通道时明确报错', noConn.includes('unavailable'), noConn);
+
+  const throwRpc = { call: async () => { const e = new Error('aborted'); e.name = 'AbortError'; throw e; } };
+  let abortName = '';
+  try { await requestUsageSnapshot(throwRpc); } catch (error) { abortName = error?.name ?? ''; }
+  check('取消信号原样上抛（供 UI 静默降级）', abortName === 'AbortError', abortName);
 }
 check('filter chips render svg icons', menuJson.includes('"viewBox":"0 0 16 16"'));
 check('menu exposes an explicit close action', menuJson.includes('[model-picker-plus]close'));

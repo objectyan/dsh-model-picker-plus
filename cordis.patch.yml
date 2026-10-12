@@ -1,3 +1,5 @@
 - insert:
     - id: model-picker-plus
       name: 'dsh-model-picker-plus'
+    - id: model-picker-plus-usage
+      name: 'dsh-model-picker-plus/usage'

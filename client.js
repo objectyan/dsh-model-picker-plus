@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.1';
+    const VERSION = '0.6.0-alpha.2';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -645,6 +645,18 @@ window.__ModuleLoader__.load({
       if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
       if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
       return `${(ms / 3_600_000).toFixed(1)}h`;
+    }
+
+    // Authenticated Connection RPC, registered explicitly by the Host-only /usage half.
+    async function requestUsageSnapshot(rpc, payload = {}, signal) {
+      if (!rpc || typeof rpc.call !== 'function') throw new Error('Usage RPC connection unavailable');
+      const result = await rpc.call('/api', 'model-picker-plus-usage/snapshot', payload, signal);
+      if (!result?.ok) throw new Error(result?.error?.message ?? 'Usage RPC failed');
+      const value = result.value;
+      if (!value || value.schemaVersion !== 2 || !value.models || !Array.isArray(value.recent)) {
+        throw new Error('Invalid usage response');
+      }
+      return value;
     }
 
     // 用量排序维度：调用次数 / 总 token / 总耗时。
@@ -1581,7 +1593,7 @@ window.__ModuleLoader__.load({
       );
     });
 
-    function ModelPickerPlus({ locked, available, directory, load, select, quickCurrent, sessionReplyState, readReplyState, readUsageIndex }) {
+    function ModelPickerPlus({ locked, available, directory, load, select, quickCurrent, sessionReplyState, readReplyState, readUsageSnapshot }) {
       const t = translate;
       const rootRef = useRef(null);
       const triggerRef = useRef(null);
@@ -1678,25 +1690,34 @@ window.__ModuleLoader__.load({
         return () => clearInterval(timer);
       }, [open, state]);
 
-      // ── 用量账本：菜单打开时现取一次汇总 ─────────────────────
+      // ── 用量账本：菜单打开时异步取一次快照 ───────────────────
       //
       // 时机与厂家频次结算一致（打开即取）：账本在 host 侧追加，每次打开都
-      // 可能有新的调用被记上。取一次就够——菜单开着也不会有新的 token 产生。
+      // 可能有新的调用被记上。
       //
-      // 取不到就保持 null（界面不显示用量），绝不退化成「0 次」——
-      // 那会让用户以为这个模型真的没用过。
+      // 必须是异步：数据经 Connection RPC 从 host 取回。取不到就保持 null
+      // （界面不显示用量），绝不退化成「0 次」——那会让用户以为这个模型
+      // 真的没用过。请求带 AbortSignal：菜单关闭即取消，不留悬挂请求。
       useEffect(() => {
-        if (!open) return;
-        if (typeof readUsageIndex !== 'function') return;
+        if (!open) return undefined;
+        if (typeof readUsageSnapshot !== 'function') return undefined;
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
         let cancelled = false;
-        try {
-          const next = readUsageIndex();
-          if (!cancelled) setUsageIndex(next);
-        } catch (error) {
-          if (!cancelled) setUsageIndex(null);
-          mark('usage index read failed', String(error?.message ?? error));
-        }
-      }, [open, readUsageIndex]);
+        Promise.resolve()
+          .then(() => readUsageSnapshot({ limit: 100 }, controller?.signal))
+          .then(
+            (snapshot) => {
+              if (cancelled) return;
+              setUsageIndex(snapshot?.models ?? null);
+            },
+            (error) => {
+              if (cancelled) return;
+              // 静默降级：拿不到就不显示用量，不打扰用户。
+              if (error?.name !== 'AbortError') mark('usage snapshot failed', String(error?.message ?? error));
+            },
+          );
+        return () => { cancelled = true; controller?.abort(); };
+      }, [open, readUsageSnapshot]);
 
       useEffect(() => {
         mark('mount', { available, hasDirectory: Boolean(directory) });
@@ -2920,48 +2941,28 @@ window.__ModuleLoader__.load({
                 }
               };
 
-              // ── 用量账本汇总：走 host RPC 读取 ──────────────────────
+              // ── 用量账本：走 Connection RPC 异步读取 ────────────────
               //
-              // 账本写在 host 侧磁盘，浏览器读不到，只能让 host 聚合后回传。
-              // host 侧 index.js 用 ctx.provide('modelPickerUsage') 暴露
-              // summarize()；这里通过同一套 remote 取件（同 modelCatalog 通路）拿它。
+              // 账本在 host 侧磁盘，浏览器读不到，只能由 host 聚合后回传。
+              // host half（usage-host.js）用 connection.rpc.intercept 注册了
+              // `model-picker-plus-usage/snapshot`，走的是 DSH 自己的 /api 通道
+              // ——origin / 认证 / peer 准入都由 Connection 负责，不新开路由。
               //
-              // 失败一律返回 null：界面据此完全不显示用量，而不是显示成 0
-              // ——「没数据」和「用了 0 次」是两件不同的事，不能混为一谈。
-              let usageRemote = null;
-              let usageRemoteResolved = false;
-              const resolveUsageRemote = () => {
-                if (usageRemoteResolved) return usageRemote;
-                usageRemoteResolved = true;
-                const candidates = [];
-                try { candidates.push(typeof ctx.get === 'function' ? ctx.get('remote.modelPickerUsage') : undefined); } catch { /* 逐个候选尝试 */ }
-                try { candidates.push(typeof ctx.get === 'function' ? ctx.get('modelPickerUsage') : undefined); } catch { /* 同上 */ }
+              // 取件按存活概率排序：connection 服务 → session 上搭便车的 remote。
+              // 任一步失败都返回 null（界面不显示用量），绝不退化成「0 次」
+              // ——「没数据」和「用了 0 次」是两件不同的事。
+              const resolveUsageRpc = () => {
+                try {
+                  const ns = typeof ctx.get === 'function' ? ctx.get('connection') : undefined;
+                  if (ns && typeof ns.rpc?.call === 'function') return ns.rpc;
+                } catch { /* 继续找下一个来源 */ }
                 try {
                   const sessionRemote = sessions?.binding?.(sessionId)?.session?.remote;
-                  if (sessionRemote) candidates.push(sessionRemote?.modelPickerUsage);
-                } catch { /* 同上 */ }
-                for (const candidate of candidates) {
-                  if (candidate && typeof candidate.summarize === 'function') {
-                    usageRemote = candidate;
-                    return usageRemote;
-                  }
-                }
+                  if (sessionRemote && typeof sessionRemote.rpc?.call === 'function') return sessionRemote.rpc;
+                } catch { /* 没有可用的 RPC 通道 */ }
                 return null;
               };
-              const readUsageIndexInternal = () => {
-                try {
-                  const svc = resolveUsageRemote();
-                  if (!svc || typeof svc.summarize !== 'function') return null;
-                  const result = svc.summarize();
-                  // RPC 形态兼容：直接给对象，或包在 { ok, value } 里。
-                  if (result && typeof result === 'object' && 'ok' in result) {
-                    return result.ok === true && result.value && typeof result.value === 'object' ? result.value : null;
-                  }
-                  return result && typeof result === 'object' ? result : null;
-                } catch {
-                  return null;
-                }
-              };
+              const readUsageSnapshot = (payload = {}, signal) => requestUsageSnapshot(resolveUsageRpc(), payload, signal);
 
               return {
                 // 取值器：绑定自愈后每次渲染读到最新值。
@@ -2986,13 +2987,10 @@ window.__ModuleLoader__.load({
                 // 实时取值器：running 会在一轮结束后立刻回到 false，
                 // props 快照会过期，所以菜单打开期间用它轮询最新状态。
                 readReplyState: readReplyStateInternal,
-                // 用量账本汇总：host 侧 index.js 把每次 llm/stream 调用落成 JSONL
-                // 明细并暴露 summarize()，client 这端读它来显示徽章与排序。
-                //
-                // 为什么不直接读文件：账本在 host 侧磁盘，浏览器拿不到。走
-                // remote RPC 是唯一通路——和 modelCatalog / selectModel 同一条路。
-                // 取不到就返回 null，界面据此完全不显示用量（优雅降级）。
-                readUsageIndex: readUsageIndexInternal,
+                // 用量快照读取器（异步）：走 Connection RPC 拿 host 侧聚合结果。
+                // 失败一律 reject/null，界面据此完全不显示用量（优雅降级），
+                // 而不是显示成「用了 0 次」。
+                readUsageSnapshot: readUsageSnapshot,
                 directory: storeProxy,
                 dispose,
                 // 返回 Promise：组件照常 void 掉，测试/调用方可精确等待。
@@ -3094,6 +3092,7 @@ window.__ModuleLoader__.load({
       usageForRow,
       sortRowsByUsage,
       usageBadge,
+      requestUsageSnapshot,
       UsagePill,
       USAGE_SORTS,
       DICT,
