@@ -307,6 +307,30 @@ console.log('\n== apply：订阅与降级 ==');
     let threw = null;
     try { apply({ logger: { warn: () => {} } }, { dataDir: dir }); } catch (e) { threw = e; }
     check('缺少 ctx.on 时不抛错', threw === null, String(threw));
+
+    // 回归守卫：connection 未就绪时插件必须照常挂载。
+    // 曾把 connection 写进 inject 数组（= 硬依赖），启动早期它就绪不了，
+    // 结果整个插件挂不上——实测表现正是「插件重启后无法启动」。
+    const mod = await import('../usage-host.js');
+    check('inject 不含 connection（它只用于回传，不能作硬依赖）',
+      !mod.inject.includes('connection'), JSON.stringify(mod.inject));
+    let noConnThrew = null;
+    const noConnSubs = [];
+    try {
+      apply({
+        logger: { warn: () => {} },
+        get: () => undefined,
+        on: (event) => { noConnSubs.push(event); },
+      }, { dataDir: dir });
+    } catch (e) { noConnThrew = e; }
+    check('connection 未就绪时仍能挂载并订阅 llm/stream',
+      noConnThrew === null && noConnSubs.includes('llm/stream'),
+      String(noConnThrew ?? noConnSubs.join(',')));
+
+    // 账本目录不可写也不能抛：采集是旁路功能，不能拖垮插件加载。
+    let badDirThrew = null;
+    try { apply({ logger: { warn: () => {} }, on: () => {} }, { dataDir: '\u0000invalid' }); } catch (e) { badDirThrew = e; }
+    check('账本目录不可写时不抛错', badDirThrew === null, String(badDirThrew));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

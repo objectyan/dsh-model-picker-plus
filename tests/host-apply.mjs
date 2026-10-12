@@ -38,8 +38,13 @@ console.log('\n== 采集入口：与官方 host 插件同形 ==');
   check('导出 apply 函数', typeof mod.apply === 'function');
   check('导出 name', typeof mod.name === 'string' && mod.name.length > 0, mod.name);
   check('inject 是普通数组（不是 optional 对象）', Array.isArray(mod.inject), JSON.stringify(mod.inject));
-  check('声明 llm 与 connection 依赖',
-    mod.inject.includes('llm') && mod.inject.includes('connection'), JSON.stringify(mod.inject));
+  // 只声明 llm 作硬依赖：记账只需要 llm/stream 事件。
+  // connection 仅用于把账本回传给界面，必须走 ctx.get 可选探测——
+  // 写进 inject 会让「connection 未就绪」变成「插件挂不上」
+  // （实测表现：插件重启后无法启动）。
+  check('声明 llm 作硬依赖', mod.inject.includes('llm'), JSON.stringify(mod.inject));
+  check('connection 不作硬依赖（未就绪时插件仍须能启动）',
+    !mod.inject.includes('connection'), JSON.stringify(mod.inject));
   check('不导出 default', mod.default === undefined);
 }
 

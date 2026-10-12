@@ -6,7 +6,11 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
 export const name = 'model-picker-plus-usage';
-export const inject = ['llm', 'connection'];
+// 只用 llm 作硬依赖：记账本身只需要 llm/stream 事件。
+// connection 是**可选**的（仅用于把账本回传给界面），用 ctx.get 探测即可。
+// 曾经把它写进 inject 数组，等于声明「没有 connection 就不许挂载」——
+// 启动早期 connection 尚未就绪时，插件会整个挂不上（实测表现为插件无法启动）。
+export const inject = ['llm'];
 export const LEDGER_FILE = 'llm-usage.jsonl';
 export const RPC_NAMESPACE = 'model-picker-plus-usage';
 const TOKEN_FIELDS = ['inputTokens', 'outputTokens', 'totalTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'];
@@ -180,7 +184,9 @@ export function registerUsageRpc(connection, service) {
 export function apply(ctx, config = {}) {
   // Explicit plugin-owned path or standard DSH_HOME, never guessed storage service properties.
   const dir = config.dataDir ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'dsh-model-picker-plus');
-  mkdirSync(dir, { recursive: true });
+  // 目录不可写时绝不能抛出——采集是旁路功能，插件必须照常挂载
+  // （否则一个统计功能会把整个包的加载带崩，这是之前踩过的坑）。
+  try { mkdirSync(dir, { recursive: true }); } catch { /* 记不了账而已，不影响插件 */ }
   let persistedCalls = 0, writeErrors = 0, lastWriteAt = null;
   const service = {
     ledgerDir: dir, ledgerPath: join(dir, LEDGER_FILE),
@@ -219,19 +225,28 @@ export function apply(ctx, config = {}) {
       return false;
     }
   };
-  if (typeof ctx.inject === 'function') {
+  // connection 不写进 inject（否则 connection 未就绪时整个插件挂不上），
+  // 改为运行时探测：拿到就注册 RPC，拿不到就先记日志，稍后重试一次。
+  if (typeof ctx.get === 'function') {
     try {
-      ctx.inject(['connection'], scope => {
-        tryRegister(scope?.connection, 'ctx.inject([connection])');
-      });
+      const direct = ctx.get('connection');
+      if (direct) tryRegister(direct, 'ctx.get(connection)');
+      else note('RPC-PENDING connection not ready at apply time');
     } catch (error) {
-      note(`RPC-INJECT-FAIL ${error?.message ?? error}`);
+      note(`RPC-GET-FAIL ${error?.message ?? error}`);
     }
   }
+  // 多数情况下 connection 在 apply 之后才就绪：用 cordis 的 effect/timer 再探一次。
+  const retry = () => {
+    try {
+      const conn = typeof ctx.get === 'function' ? ctx.get('connection') : undefined;
+      if (conn) tryRegister(conn, 'retry');
+    } catch { /* 仍不可用则保持无 RPC，界面静默降级 */ }
+  };
   try {
-    const direct = typeof ctx.get === 'function' ? ctx.get('connection') : undefined;
-    if (direct) tryRegister(direct, 'ctx.get(connection)');
-  } catch { /* 上面 inject 路径已覆盖 */ }
+    if (typeof ctx.effect === 'function') ctx.effect(() => { const t = setTimeout(retry, 1500); return () => clearTimeout(t); }, 'model-picker-plus: usage RPC retry');
+    else setTimeout(retry, 1500).unref?.();
+  } catch { /* 拿不到 timer 就只靠 apply 时机那一次 */ }
   return service;
 }
 export const __test = { normalizeUsage, normalizeFinish, wrapStream, appendRecord, summarize, buildUsageIndex, totalOf, LEDGER_FILE };
