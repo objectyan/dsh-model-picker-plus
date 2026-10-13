@@ -1224,6 +1224,32 @@ console.log('\n== 用量展示与排序 ==');
     check('RPC 取件器只出现一次（仅定义，无跨作用域引用）', uses === 1, `occurrences=${uses}`);
     check('RPC 通道在注册时经闭包解析',
       src.slice(src.indexOf('function apply(ctx)')).includes('resolveSettingsRpc(ctx)'));
+
+    // 三视图：明细 / 汇总 / 时间线，同一份数据三种看法，筛选条件共用。
+    const { summarizeUsage } = plugin.__test;
+    check('汇总函数已导出', typeof summarizeUsage === 'function');
+    if (typeof summarizeUsage === 'function') {
+      const sample = [
+        { provider: 'p', model: 'm', ok: true, durationMs: 100, usageReported: true, inputTokens: 10, outputTokens: 20 },
+        { provider: 'p', model: 'm', ok: true, durationMs: 300, usageReported: true, inputTokens: 30, outputTokens: 40 },
+        { provider: 'p', model: 'm', ok: false, durationMs: 200, usageReported: false },
+        { provider: 'q', model: 'n', ok: true, durationMs: 50, usageReported: true, inputTokens: 5, outputTokens: 5 },
+      ];
+      const sums = summarizeUsage(sample);
+      check('汇总按 provider/model 分组', sums.length === 2, `groups=${sums.length}`);
+      const pm = sums.find(e => e.key === 'p/m');
+      check('汇总统计调用数', pm.calls === 3, `calls=${pm?.calls}`);
+      check('汇总区分成功与失败', pm.ok === 2 && pm.failed === 1, `ok=${pm?.ok} failed=${pm?.failed}`);
+      check('汇总累计 token（仅计上报的）', pm.tokens === 100, `tokens=${pm?.tokens}`);
+      check('汇总平均 token 只按上报样本算', pm.avgTokens === 50, `avg=${pm?.avgTokens}`);
+      check('汇总平均耗时含全部样本', pm.avgDurationMs === 200, `avgMs=${pm?.avgDurationMs}`);
+      check('汇总成功率在 0..1', pm.successRate > 0.6 && pm.successRate < 0.7, `rate=${pm?.successRate}`);
+      check('汇总对空输入不崩', Array.isArray(summarizeUsage(null)) && summarizeUsage(null).length === 0);
+      check('汇总跳过非对象行', summarizeUsage([null, undefined, 7]).length === 0);
+    }
+    check('三个视图标签齐备', ['usageTabRows', 'usageTabSummary', 'usageTabTimeline']
+      .every(key => src.includes(`usageTab${key.slice(8)}:`) || src.includes(key)));
+    check('视图由 tab 状态切换', page.includes("useState('rows')") && page.includes("tab === 'summary'") && page.includes("tab === 'timeline'"));
   }
 
   // 用户不该记住「推荐页要点右边按钮、其它页点整行」这种不一致的规则。
@@ -1421,7 +1447,9 @@ console.log('\n== the shell no longer invents a diagnosis on bind failure ==');
   // 结构性断言：绑定失败必须**抛出带原因的异常**，而不是 return false 让上层
   // 猜。这是本次修复的核心不变量，回归时会立刻暴露。
   // 注意要锚定门面那一个 select —— 文件里另有应急目录的同名方法。
-  const facadeStart = source.indexOf('select: async (selection) => {\n                  revive();');
+  // 锚点只取方法签名 + 紧随其后的 revive()，不写死缩进：
+  // 整体重排版会改变缩进宽度，把断言写死就会变成「排版触发假失败」。
+  const facadeStart = source.indexOf('select: async (selection) => {', source.indexOf('readUsageSnapshot'));
   check('the facade select is locatable', facadeStart > 0, String(facadeStart));
   const head = source.slice(facadeStart, facadeStart + 1400);
   check('a bind failure throws with the real reason',

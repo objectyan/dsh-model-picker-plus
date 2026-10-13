@@ -140,6 +140,29 @@ window.__ModuleLoader__.load({
         usageOk: '成功',
         usageFailed: '失败',
         usageEmpty: '还没有用量记录',
+        // 三视图：明细 / 汇总 / 时间线
+        usageTabRows: '明细',
+        usageTabSummary: '汇总',
+        usageTabTimeline: '时间线',
+        usageKpiRequests: '总请求数',
+        usageKpiTokens: '累计 token',
+        usageKpiDuration: '累计耗时',
+        usageFilterAll: '全部',
+        usageFilterOk: '成功',
+        usageFilterFailed: '失败',
+        usageSearchPlaceholder: '搜索模型 / 提供方',
+        usageSortBy: '排序',
+        usageColCount: '调用',
+        usageColFailures: '失败',
+        usageColAvgTokens: '平均 token',
+        usageColAvgDuration: '平均耗时',
+        usageColSuccessRate: '成功率',
+        usageColFirstChunk: '首字',
+        usageColErrorCode: '错误码',
+        usageColSession: '会话',
+        usageAllSucceeded: '全部成功',
+        usageNoMatch: '没有匹配的记录',
+        usageMore: '条更多记录',
         providers: '全部来源',
         noResults: '没有匹配的模型',
         retry: '重试',
@@ -236,6 +259,29 @@ window.__ModuleLoader__.load({
         usageOk: 'ok',
         usageFailed: 'failed',
         usageEmpty: 'No usage records yet',
+        // Three views: rows / summary / timeline
+        usageTabRows: 'Rows',
+        usageTabSummary: 'Summary',
+        usageTabTimeline: 'Timeline',
+        usageKpiRequests: 'Total requests',
+        usageKpiTokens: 'Total tokens',
+        usageKpiDuration: 'Total duration',
+        usageFilterAll: 'All',
+        usageFilterOk: 'ok',
+        usageFilterFailed: 'failed',
+        usageSearchPlaceholder: 'Search model / provider',
+        usageSortBy: 'Sort',
+        usageColCount: 'calls',
+        usageColFailures: 'failures',
+        usageColAvgTokens: 'avg tokens',
+        usageColAvgDuration: 'avg duration',
+        usageColSuccessRate: 'success rate',
+        usageColFirstChunk: 'first token',
+        usageColErrorCode: 'error',
+        usageColSession: 'session',
+        usageAllSucceeded: 'all ok',
+        usageNoMatch: 'No matching records',
+        usageMore: 'more records',
         providers: 'All providers',
         noResults: 'No matching models',
         retry: 'Retry',
@@ -3183,6 +3229,36 @@ window.__ModuleLoader__.load({
     // 不依赖 ModelPickerPlus 的 inject 作用域（那边的 RPC 取件器是组件局部
     // 函数，apply 顶层引用不到 —— 曾经因此抛 ReferenceError 把整个
     // settings.section 卸载掉）。
+    // 按 provider/model 汇总：汇总页与「哪个模型用得多」的答案都来自这里。
+    // 口径与 host 侧 buildUsageIndex 一致（requestId 去重、legacy 折叠），
+    // 但设置页拿到的是快照里的 recent 子集，因此只对**可见记录**做汇总。
+    function summarizeUsage(records) {
+      const map = new Map();
+      for (const r of records ?? []) {
+        // 账本是 JSONL，损坏行/半截行会解析出 null 或原始值。汇总必须跳过它们，
+        // 否则 r.provider 访问会抛，整页崩掉。
+        if (r === null || typeof r !== 'object') continue;
+        if (typeof r.provider !== 'string' || typeof r.model !== 'string') continue;
+        const key = `${r.provider}/${r.model}`;
+        let entry = map.get(key);
+        if (!entry) {
+          entry = { key, provider: r.provider, model: r.model, calls: 0, ok: 0, failed: 0, tokens: 0, tokenReported: 0, durationMs: 0 };
+          map.set(key, entry);
+        }
+        entry.calls += 1;
+        if (r.ok) entry.ok += 1; else entry.failed += 1;
+        entry.durationMs += Number.isSafeInteger(r.durationMs) ? r.durationMs : 0;
+        if (r.usageReported === true) { entry.tokens += totalTokensOf(r); entry.tokenReported += 1; }
+      }
+      const list = [...map.values()];
+      for (const e of list) {
+        e.avgTokens = e.tokenReported > 0 ? Math.round(e.tokens / e.tokenReported) : null;
+        e.avgDurationMs = e.calls > 0 ? Math.round(e.durationMs / e.calls) : 0;
+        e.successRate = e.calls > 0 ? e.ok / e.calls : 0;
+      }
+      return list;
+    }
+
     // 账本把 token 分桶存（inputTokens/outputTokens/cacheReadTokens），
     // 没有 totalTokens 字段 —— 与 host 侧 totalOf() 同口径求和，
     // 优先采信上游给出的 totalTokens。
@@ -3198,19 +3274,26 @@ window.__ModuleLoader__.load({
       const [snapshot, setSnapshot] = useState(null);
       const [error, setError] = useState(null);
       const [loading, setLoading] = useState(true);
-      // props.rpc 优先（宿主可能直接给通道）；否则自己向宿主取。
-      const channel = rpc ?? ctxRpcChannel();
-      const channelRef = useRef(channel);
-      channelRef.current = channel;
+      // 通道由注册方经 props 传入（apply 作用域解析，见 resolveSettingsRpc）。
+      // 没有通道就显示明确错误，而不是把整个 settings.section 拖崩。
+      const channel = rpc ?? null;
+
+      // 三视图 + 共享筛选。同一份数据三种看法：明细（逐请求）、汇总（谁用得多）、
+      // 时间线（什么时候发生的）。筛选条件三者共用，切换标签不丢上下文。
+      const [tab, setTab] = useState('rows');
+      const [statusFilter, setStatusFilter] = useState('all');
+      const [query, setQuery] = useState('');
+      const [sortBy, setSortBy] = useState('calls');
+      const [expanded, setExpanded] = useState(() => new Set());
 
       useEffect(() => {
-        const active = channelRef.current;
+        const active = channel;
         if (!active || typeof active.call !== 'function') {
           setError(t('usageRpcMissing')); setLoading(false); return undefined;
         }
         let cancelled = false;
         Promise.resolve()
-          .then(() => active.call('/api', 'model-picker-plus-usage/snapshot', { limit: 200 }))
+          .then(() => active.call('/api', 'model-picker-plus-usage/snapshot', { limit: 500 }))
           .then((result) => {
             if (cancelled) return;
             const value = result?.value;
@@ -3219,15 +3302,56 @@ window.__ModuleLoader__.load({
           })
           .catch((e) => { if (!cancelled) { setError(String(e?.message ?? e)); setLoading(false); } });
         return () => { cancelled = true; };
-      }, [rpc]);
+      }, [channel]);
 
-      const rows = snapshot?.recent ?? [];
+      const allRows = snapshot?.recent ?? [];
       const status = snapshot?.status ?? null;
-      const wrap = { padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '14px', minHeight: 0 };
+      const wrap = { padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0, color: colors.text };
+
+      // ── 共享筛选（三个视图共用） ──────────────────────────
+      const needle = query.trim().toLowerCase();
+      const rows = useMemo(() => allRows.filter((r) => {
+        if (statusFilter === 'ok' && r.ok !== true) return false;
+        if (statusFilter === 'failed' && r.ok === true) return false;
+        if (!needle) return true;
+        return `${r.provider ?? ''} ${r.model ?? ''} ${r.error?.code ?? ''}`.toLowerCase().includes(needle);
+      }), [allRows, statusFilter, needle]);
+      // 明细与时间线按时序倒序（最近的在上）；汇总另行排序。
+      const rowsDesc = useMemo(() => rows.slice().reverse(), [rows]);
+      const summary = useMemo(() => {
+        const list = summarizeUsage(rows);
+        const pick = { calls: e => e.calls, tokens: e => e.tokens, duration: e => e.durationMs }[sortBy] ?? (e => e.calls);
+        // 稳定排序：同值时按名称定序，避免每次渲染顺序跳动。
+        return list.slice().sort((a, b) => pick(b) - pick(a) || a.key.localeCompare(b.key));
+      }, [rows, sortBy]);
+      const maxCalls = useMemo(() => summary.reduce((m, e) => Math.max(m, e.calls), 0) || 1, [summary]);
+
+      const kpi = useMemo(() => {
+        let tokens = 0, durationMs = 0;
+        for (const r of rows) {
+          if (r.usageReported === true) tokens += totalTokensOf(r);
+          if (Number.isSafeInteger(r.durationMs)) durationMs += r.durationMs;
+        }
+        return { requests: rows.length, tokens, durationMs };
+      }, [rows]);
+
+      const th = (label, align) => React.createElement('th', {
+        key: label,
+        style: { textAlign: align ?? 'left', padding: '7px 9px', color: colors.muted, fontWeight: 600, borderBottom: `1px solid ${colors.border}`, whiteSpace: 'nowrap', fontSize: '11.5px' },
+      }, label);
+      // 单元格：cell(content, { style 覆盖 }) —— 内容可含 React 节点。
+      const td = (content, style) => React.createElement('td', {
+        style: { padding: '6px 9px', borderBottom: `1px solid ${colors.border}`, color: colors.muted, whiteSpace: 'nowrap', ...style },
+      }, content);
+      const table = (heads, body) => React.createElement('div', {
+        style: { flex: 1, minHeight: 0, overflowY: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px' },
+      }, React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } },
+        React.createElement('thead', null, React.createElement('tr', null, heads)),
+        React.createElement('tbody', null, body)));
 
       return React.createElement('div', { style: wrap },
         React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
-          React.createElement('span', { style: { fontSize: '14px', fontWeight: 700, color: colors.text } }, t('usageDetailTitle')),
+          React.createElement('span', { style: { fontSize: '15px', fontWeight: 700, color: colors.text } }, t('usageDetailTitle')),
           React.createElement('span', { style: { fontSize: '11px', color: colors.muted } },
             status ? `${t('usageDetailCallsLabel')} ${status.recordCount}` : ''),
           onClose
@@ -3237,65 +3361,170 @@ window.__ModuleLoader__.load({
             }, t('close'))
             : null,
         ),
+        // ── 三视图标签 ──────────────────────────────────────
+        React.createElement('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+          [['rows', t('usageTabRows')], ['summary', t('usageTabSummary')], ['timeline', t('usageTabTimeline')]]
+            .map(([id, label]) => React.createElement('button', {
+              key: id,
+              type: 'button',
+              'aria-pressed': tab === id,
+              onClick: () => setTab(id),
+              style: {
+                padding: '5px 13px', borderRadius: '999px', fontSize: '12px', cursor: 'pointer',
+                border: `1px solid ${tab === id ? colors.accent : colors.border}`,
+                background: tab === id ? tint(colors.accent, 12) : 'transparent',
+                color: tab === id ? colors.accent : colors.muted,
+              },
+            }, label)),
+          // 状态筛选 + 搜索：三个视图共用，切标签不丢上下文
+          [['all', t('usageFilterAll')], ['ok', t('usageFilterOk')], ['failed', t('usageFilterFailed')]]
+            .map(([id, label]) => React.createElement('button', {
+              key: id,
+              type: 'button',
+              'aria-pressed': statusFilter === id,
+              onClick: () => setStatusFilter(id),
+              style: {
+                padding: '4px 11px', borderRadius: '999px', fontSize: '11.5px', cursor: 'pointer',
+                border: `1px solid ${statusFilter === id ? colors.accent : colors.border}`,
+                background: statusFilter === id ? tint(colors.accent, 12) : 'transparent',
+                color: statusFilter === id ? colors.accent : colors.muted,
+              },
+            }, label)),
+          React.createElement('input', {
+            type: 'search',
+            value: query,
+            placeholder: t('usageSearchPlaceholder'),
+            'aria-label': t('usageSearchPlaceholder'),
+            onChange: (event) => setQuery(event?.target?.value ?? ''),
+            style: {
+              marginLeft: 'auto', width: '190px', padding: '5px 10px', fontSize: '12px',
+              background: colors.panel ?? '#1a1a1c', color: colors.text,
+              border: `1px solid ${colors.border}`, borderRadius: '7px', outline: 'none',
+            },
+          }),
+        ),
         loading
           ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px' } }, t('loading'))
           : error
             ? React.createElement('div', { style: { color: colors.danger, fontSize: '12.5px' } }, error)
             : rows.length === 0
-              ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px' } }, t('usageEmpty'))
-              : React.createElement('div', {
-                style: {
-                  flex: 1, minHeight: 0, overflowY: 'auto',
-                  border: `1px solid ${colors.border}`, borderRadius: '10px',
+              ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px' } },
+                allRows.length === 0 ? t('usageEmpty') : t('usageNoMatch'))
+              : tab === 'summary'
+                // ── 视图 B：按模型汇总（谁用得多） ──────────────
+                ? React.createElement('div', {
+                  style: { flex: 1, minHeight: 0, overflowY: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px' },
                 },
-              },
-                React.createElement('table', {
-                  style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' },
-                },
-                  React.createElement('thead', null,
-                    React.createElement('tr', null,
-                      [t('usageColTime'), t('usageColProvider'), t('usageColModel'),
-                        t('usageColTokens'), t('usageColDuration'), t('usageColStatus')]
-                        .map((head, i) => React.createElement('th', {
-                          key: head,
-                          style: {
-                            textAlign: i >= 3 && i <= 4 ? 'right' : 'left',
-                            padding: '7px 9px', color: colors.muted, fontWeight: 600,
-                            borderBottom: `1px solid ${colors.border}`, whiteSpace: 'nowrap',
+                  React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } },
+                    React.createElement('thead', null, React.createElement('tr', null,
+                      th(t('usageColModel')), th('', ''), th(t('usageColCount'), 'right'),
+                      th(t('usageColTokens'), 'right'), th(t('usageColDuration'), 'right'),
+                      th(t('usageColFailures'), 'right'), th(t('usageColAvgTokens'), 'right'),
+                      th(t('usageColSuccessRate'), 'right'))),
+                    React.createElement('tbody', null,
+                      summary.map((e) => {
+                        const isOpen = expanded.has(e.key);
+                        const detail = rows.filter(r => `${r.provider}/${r.model}` === e.key);
+                        return React.createElement(React.Fragment, { key: e.key },
+                          React.createElement('tr', {
+                            onClick: () => setExpanded(prev => {
+                              const next = new Set(prev);
+                              if (next.has(e.key)) next.delete(e.key); else next.add(e.key);
+                              return next;
+                            }),
+                            style: { cursor: 'pointer', borderBottom: `1px solid ${colors.border}`, background: isOpen ? tint(colors.accent, 7) : 'transparent' },
                           },
-                        }, head)),
+                            td(`${isOpen ? '▾' : '▸'} ${e.model}`, { color: colors.text }),
+                            td(e.provider),
+                            td(React.createElement('div', { style: { height: '4px', background: '#2a2a30', borderRadius: '2px', overflow: 'hidden', minWidth: '70px' } },
+                              React.createElement('div', { style: { height: '100%', width: `${Math.round((e.calls / maxCalls) * 100)}%`, background: colors.accent } }))),
+                            td(String(e.calls), { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
+                            td(e.tokenReported > 0 ? formatTokens(e.tokens) : '—', { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
+                            td(formatDuration(e.durationMs) || '—', { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
+                            td(e.failed > 0 ? String(e.failed) : '0', { textAlign: 'right', color: e.failed > 0 ? colors.danger : colors.muted, fontFamily: 'ui-monospace, Consolas, monospace' }),
+                            td(e.avgTokens !== null ? formatTokens(e.avgTokens) : '—', { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
+                            td(`${Math.round(e.successRate * 100)}%`, {
+                              textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace',
+                              color: e.successRate >= 0.9 ? colors.ok : e.successRate >= 0.6 ? colors.text : colors.danger,
+                            }),
+                          ),
+                          isOpen
+                            ? React.createElement('tr', null,
+                              React.createElement('td', { colSpan: 8, style: { padding: '4px 9px 9px 26px', borderBottom: `1px solid ${colors.border}`, background: tint(colors.accent, 4) } },
+                                detail.slice(-8).reverse().map((r, i) => React.createElement('div', {
+                                  key: `${r.requestId ?? i}`,
+                                  style: { display: 'flex', gap: '10px', fontSize: '11.5px', color: colors.muted, padding: '2px 0', fontFamily: 'ui-monospace, Consolas, monospace' },
+                                },
+                                  React.createElement('span', { style: { width: '62px' } }, new Date(r.startedAt).toLocaleTimeString()),
+                                  React.createElement('span', { style: { flex: 1, color: colors.text } }, String(r.model)),
+                                  React.createElement('span', { style: { width: '68px', textAlign: 'right' } }, r.usageReported === true ? formatTokens(totalTokensOf(r)) : '—'),
+                                  React.createElement('span', { style: { width: '58px', textAlign: 'right' } }, formatDuration(r.durationMs) || '—'),
+                                  React.createElement('span', { style: { width: '38px', textAlign: 'right', color: r.ok ? colors.ok : colors.danger } }, r.ok ? '✓' : '✕'),
+                                )),
+                                detail.length > 8
+                                  ? React.createElement('div', { style: { fontSize: '11px', color: colors.muted, paddingTop: '3px' } }, `… ${detail.length - 8} ${t('usageMore')}`)
+                                  : null,
+                              ))
+                            : null,
+                        );
+                      }),
                     ),
                   ),
-                  React.createElement('tbody', null,
-                    rows.map((row, index) => {
-                      // 账本把 token 分桶存（input/output/cacheRead），没有 totalTokens 字段。
-                      // 这里与 host 侧 totalOf() 同口径：优先 totalTokens，否则三桶相加。
+                )
+                : tab === 'timeline'
+                  // ── 视图 C：时间线（什么时候发生的） ────────────
+                  ? React.createElement('div', {
+                    style: { flex: 1, minHeight: 0, overflowY: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px', padding: '4px 0' },
+                  },
+                    rowsDesc.map((r, i) => React.createElement('div', {
+                      key: `${r.requestId ?? i}`,
+                      style: { display: 'flex', gap: '10px', padding: '7px 12px', borderBottom: `1px solid ${colors.border}` },
+                    },
+                      React.createElement('span', { style: { width: '64px', textAlign: 'right', color: colors.muted, fontSize: '11px', fontFamily: 'ui-monospace, Consolas, monospace' } },
+                        new Date(r.startedAt).toLocaleTimeString()),
+                      React.createElement('span', {
+                        title: r.ok ? t('usageOk') : (r.error?.code ?? t('usageFailed')),
+                        style: { width: '7px', height: '7px', borderRadius: '50%', marginTop: '5px', flex: 'none', background: r.ok ? colors.ok : colors.danger },
+                      }),
+                      React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                        React.createElement('div', { style: { fontSize: '12.5px', color: colors.text } },
+                          String(r.model),
+                          React.createElement('span', { style: { color: colors.muted, fontSize: '11px' } }, ` · ${r.provider}`)),
+                        React.createElement('div', { style: { fontSize: '11px', color: colors.muted, fontFamily: 'ui-monospace, Consolas, monospace' } },
+                          [
+                            r.usageReported === true ? formatTokens(totalTokensOf(r)) : '—',
+                            formatDuration(r.durationMs) || '—',
+                            r.firstChunkMs !== undefined ? `${t('usageColFirstChunk')} ${(r.firstChunkMs / 1000).toFixed(1)}s` : null,
+                            r.ok ? null : (r.error?.code ?? t('usageFailed')),
+                            r.sessionId ? `${t('usageColSession')} ${String(r.sessionId).slice(0, 8)}` : null,
+                          ].filter(Boolean).join(' · ')),
+                      ),
+                    )),
+                  )
+                  // ── 视图 A：明细表（逐请求） ──────────────────
+                  : table(
+                    [th(t('usageColTime')), th(t('usageColProvider')), th(t('usageColModel')),
+                      th(t('usageColTokens'), 'right'), th(t('usageColDuration'), 'right'), th(t('usageColStatus'))],
+                    rowsDesc.map((row, index) => {
                       const tokens = totalTokensOf(row);
                       const hasTokens = row.usageReported === true;
-                      return React.createElement('tr', {
-                        key: `${row.requestId ?? index}`,
-                        style: { borderBottom: `1px solid ${colors.border}` },
-                      },
-                        React.createElement('td', {
-                          style: { padding: '6px 9px', color: colors.muted, whiteSpace: 'nowrap', fontFamily: 'ui-monospace, Consolas, monospace' },
-                          title: `${t('usageColTime')} ${new Date(row.startedAt).toLocaleString()}`,
-                        }, new Date(row.startedAt).toLocaleTimeString()),
-                        React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, whiteSpace: 'nowrap' } }, String(row.provider)),
-                        React.createElement('td', { style: { padding: '6px 9px', color: colors.text, whiteSpace: 'nowrap' } }, String(row.model)),
-                        React.createElement('td', {
-                          style: { padding: '6px 9px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, Consolas, monospace' },
+                      return React.createElement('tr', { key: `${row.requestId ?? index}` },
+                        td(new Date(row.startedAt).toLocaleTimeString(), {
+                          title: new Date(row.startedAt).toLocaleString(), fontFamily: 'ui-monospace, Consolas, monospace',
+                        }),
+                        td(String(row.provider)),
+                        td(String(row.model), { color: colors.text }),
+                        td(hasTokens ? formatTokens(tokens) : '—', {
+                          textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace',
                           title: hasTokens
                             ? `in ${row.inputTokens ?? 0} / out ${row.outputTokens ?? 0} / cache ${row.cacheReadTokens ?? 0}`
                             : t('usageTokensUnavailable'),
-                        }, hasTokens ? formatTokens(tokens) : '—'),
-                        React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, Consolas, monospace' } }, formatDuration(row.durationMs) || '—'),
-                        React.createElement('td', { style: { padding: '6px 9px', color: row.ok ? colors.ok : colors.danger, whiteSpace: 'nowrap' } },
-                          row.ok ? t('usageOk') : t('usageFailed')),
+                        }),
+                        td(formatDuration(row.durationMs) || '—', { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
+                        td(row.ok ? t('usageOk') : (row.error?.code ?? t('usageFailed')), { color: row.ok ? colors.ok : colors.danger }),
                       );
                     }),
                   ),
-                ),
-              ),
       );
     });
 
@@ -3351,6 +3580,7 @@ window.__ModuleLoader__.load({
       sortRowsByUsage,
       usageBadge,
       totalTokensOf,
+      summarizeUsage,
       requestUsageSnapshot,
       UsagePill,
       UsageDetailPage,

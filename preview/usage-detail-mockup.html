@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模型用量明细 — 效果图</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d0d0f; color: #e8e8ea;
+    font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    padding: 32px; display: flex; gap: 28px; align-items: flex-start;
+  }
+  .col { flex: 1; min-width: 0; }
+  h2 { font-size: 15px; margin-bottom: 4px; }
+  .note { color: #8a8a92; font-size: 12px; margin-bottom: 14px; }
+  .panel { background: #141416; border: 1px solid #26262a; border-radius: 12px; overflow: hidden; }
+
+  /* 侧栏 */
+  .side { background: #161618; border: 1px solid #26262a; border-radius: 10px; padding: 8px; width: 190px; flex: none; }
+  .side a { display: flex; align-items: center; gap: 9px; padding: 9px 11px; border-radius: 7px;
+            color: #b8b8be; font-size: 13px; text-decoration: none; }
+  .side a.on { background: #26262b; color: #fff; }
+
+  .body { padding: 16px 18px; }
+  .head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .head h3 { font-size: 17px; font-weight: 700; }
+  .sub { color: #8a8a92; font-size: 12px; margin-bottom: 16px; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .card { background: #1a1a1c; border: 1px solid #26262a; border-radius: 10px; padding: 12px 13px; }
+  .card b { display: block; font-size: 22px; font-weight: 700; letter-spacing: -.5px; }
+  .card span { color: #8a8a92; font-size: 11px; }
+  .card em { color: #4ade80; font-size: 10.5px; font-style: normal; }
+
+  .tools { display: flex; gap: 7px; align-items: center; margin-bottom: 12px; }
+  .chip { padding: 4px 11px; border-radius: 999px; border: 1px solid #2e2e34; font-size: 11.5px; color: #a8a8b0; }
+  .chip.on { background: #2b2b30; border-color: #3a3a42; color: #fff; }
+  .search { margin-left: auto; background: #1a1a1c; border: 1px solid #26262a; border-radius: 7px;
+            padding: 6px 10px; color: #8a8a92; font-size: 12px; width: 170px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; padding: 7px 9px; color: #8a8a92; font-weight: 600;
+       border-bottom: 1px solid #26262a; white-space: nowrap; font-size: 11.5px; }
+  td { padding: 6px 9px; border-bottom: 1px solid #1e1e22; white-space: nowrap; }
+  .mono { font-family: ui-monospace, Consolas, monospace; }
+  .r { text-align: right; }
+  .mut { color: #8a8a92; }
+  .ok { color: #4ade80; } .bad { color: #f87171; }
+  .scroll { max-height: 340px; overflow: auto; }
+
+  /* 方案B：按模型分组 */
+  .grp { border-bottom: 1px solid #1e1e22; }
+  .grp-h { display: flex; align-items: center; gap: 10px; padding: 9px 10px; background: #18181b;
+           font-size: 12.5px; font-weight: 650; }
+  .bar { height: 4px; background: #2a2a30; border-radius: 2px; overflow: hidden; width: 90px; }
+  .bar i { display: block; height: 100%; background: #5b8def; }
+  .mini { padding: 4px 10px 8px 30px; font-size: 11.5px; color: #8a8a92; }
+
+  /* 方案C：时间线 */
+  .tl { padding: 4px 0; }
+  .ev { display: flex; gap: 10px; padding: 7px 10px 7px 0; position: relative; }
+  .ev .t { width: 64px; color: #8a8a92; font-size: 11px; text-align: right; padding-top: 1px; }
+  .ev .dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; flex: none; }
+  .ev .c { flex: 1; min-width: 0; }
+  .ev .n { font-size: 12.5px; }
+  .ev .x { font-size: 11px; color: #8a8a92; }
+</style>
+</head>
+<body>
+
+<!-- ══════════ 方案 A：明细表 + KPI ══════════ -->
+<div class="col">
+  <h2>方案 A · 明细表 + 汇总卡片</h2>
+  <div class="note">当前实现方向，补上 KPI、筛选、搜索</div>
+  <div style="display:flex; gap:10px; align-items:flex-start">
+    <div class="side">
+      <a>账号与余额</a><a>通用设置</a><a>模型</a><a>内置插件</a>
+      <a>Antigravity</a><a>Agent 预设</a><a class="on">模型用量明细</a>
+      <a>插件市场</a><a>插件设置</a>
+    </div>
+    <div class="panel body" style="flex:1">
+      <div class="head"><h3>模型用量明细</h3></div>
+      <div class="sub">852 条记录 · 累计 311.4M token · 累计 1h 47m</div>
+
+      <div class="cards">
+        <div class="card"><b>852</b><span>总请求数</span> <em>+12%</em></div>
+        <div class="card"><b>311.4M</b><span>累计 token</span></div>
+        <div class="card"><b>1h 47m</b><span>累计耗时</span></div>
+      </div>
+
+      <div class="tools">
+        <span class="chip on">全部</span><span class="chip">成功</span><span class="chip">失败</span>
+        <div class="search">搜索模型 / 提供方</div>
+      </div>
+
+      <table>
+        <thead><tr><th>时间</th><th>提供方</th><th>模型</th><th class="r">token</th><th class="r">耗时</th><th>状态</th></tr></thead>
+        <tbody class="mono">
+          <tr><td class="mut">16:46:12</td><td class="mut">opencode2dsh</td><td>space-bunny-free</td><td class="r">170.9K</td><td class="r mut">8.0s</td><td class="ok">成功</td></tr>
+          <tr><td class="mut">16:45:20</td><td class="mut">opencode2dsh</td><td>space-bunny-free</td><td class="r">170.6K</td><td class="r mut">15.1s</td><td class="ok">成功</td></tr>
+          <tr><td class="mut">16:44:33</td><td class="mut">opencode2dsh</td><td>step-5-preview-free</td><td class="r">12.4K</td><td class="r mut">45.9s</td><td class="bad">失败</td></tr>
+          <tr><td class="mut">16:43:22</td><td class="mut">workbuddy-global</td><td>deepseek-v4.1-flash</td><td class="r">530.2K</td><td class="r mut">65.3s</td><td class="ok">成功</td></tr>
+          <tr><td class="mut">16:42:08</td><td class="mut">workbuddy-global</td><td>step-5-preview</td><td class="r">1.2M</td><td class="r mut">35.0s</td><td class="ok">成功</td></tr>
+          <tr><td class="mut">16:41:55</td><td class="mut">opencode2dsh</td><td>space-bunny-free</td><td class="r">169.9K</td><td class="r mut">20.0s</td><td class="ok">成功</td></tr>
+          <tr><td class="mut">16:40:47</td><td class="mut">opencode2dsh</td><td>step-5-preview-free</td><td class="r">—</td><td class="r mut">9.3s</td><td class="bad">失败</td></tr>
+          <tr><td class="mut">16:39:12</td><td class="mut">workbuddy-global</td><td>deepseek-v4.1-flash</td><td class="r">160.1M</td><td class="r mut">3047.0s</td><td class="ok">成功</td></tr>
+          <tr><td class="mut">16:37:01</td><td class="mut">deepseek-official</td><td>deepseek-flash</td><td class="r">19.7K</td><td class="r mut">19.0s</td><td class="ok">成功</td></tr>
+          <tr><td class="mut">16:35:29</td><td class="mut">openai-codex</td><td>gpt-6.1-sol</td><td class="r">—</td><td class="r mut">130.0s</td><td class="bad">失败</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ 方案 B：按模型汇总 ══════════ -->
+<div class="col">
+  <h2>方案 B · 按模型汇总（可展开明细）</h2>
+  <div class="note">先看「谁用得多」，再点开看「每次请求」</div>
+  <div class="panel body">
+    <div class="head"><h3>模型用量明细</h3></div>
+    <div class="sub">852 条记录 · 8 个模型 · 5 个提供方</div>
+
+    <div class="tools">
+      <span class="chip on">按调用</span><span class="chip">按 token</span><span class="chip">按耗时</span>
+    </div>
+
+    <div class="grp">
+      <div class="grp-h">
+        <span style="flex:1">opencode2dsh / step-5-preview-free</span>
+        <div class="bar"><i style="width:100%"></i></div>
+        <span class="mono mut" style="width:56px;text-align:right">409 次</span>
+        <span class="mono mut" style="width:66px;text-align:right">28.4M</span>
+        <span style="width:74px;text-align:right;color:#f87171">251 失败</span>
+      </div>
+      <div class="mini">平均 12.6K token · 平均 31.2s · 成功率 39%</div>
+    </div>
+
+    <div class="grp">
+      <div class="grp-h">
+        <span style="flex:1">workbuddy-global / deepseek-v4.1-flash</span>
+        <div class="bar"><i style="width:71%"></i></div>
+        <span class="mono mut" style="width:56px;text-align:right">291 次</span>
+        <span class="mono mut" style="width:66px;text-align:right">160.1M</span>
+        <span style="width:74px;text-align:right;color:#f87171">31 失败</span>
+      </div>
+      <div class="mini">平均 550.2K token · 平均 11.0s · 成功率 89%</div>
+    </div>
+
+    <div class="grp">
+      <div class="grp-h">
+        <span style="flex:1">opencode2dsh / space-bunny-free</span>
+        <div class="bar"><i style="width:12%"></i></div>
+        <span class="mono mut" style="width:56px;text-align:right">50 次</span>
+        <span class="mono mut" style="width:66px;text-align:right">8.3M</span>
+        <span style="width:74px;text-align:right;color:#f87171">12 失败</span>
+      </div>
+      <div class="mini">平均 166.4K token · 平均 14.0s · 成功率 76%</div>
+    </div>
+
+    <div class="grp">
+      <div class="grp-h">
+        <span style="flex:1">workbuddy-global / step-5-preview</span>
+        <div class="bar"><i style="width:9%"></i></div>
+        <span class="mono mut" style="width:56px;text-align:right">38 次</span>
+        <span class="mono mut" style="width:66px;text-align:right">8.2M</span>
+        <span style="width:74px;text-align:right;color:#4ade80">全部成功</span>
+      </div>
+      <div class="mini">平均 215.3K token · 平均 10.4s · 成功率 100%</div>
+    </div>
+
+    <div class="grp">
+      <div class="grp-h">
+        <span style="flex:1">deepseek-official / deepseek-flash</span>
+        <div class="bar"><i style="width:5%"></i></div>
+        <span class="mono mut" style="width:56px;text-align:right">19 次</span>
+        <span class="mono mut" style="width:66px;text-align:right">23.6K</span>
+        <span style="width:74px;text-align:right;color:#4ade80">2 失败</span>
+      </div>
+      <div class="mini">平均 1.2K token · 平均 1.7s · 成功率 89%</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ 方案 C：时间线 ══════════ -->
+<div class="col">
+  <h2>方案 C · 时间线视图</h2>
+  <div class="note">像聊天记录一样按时序回看</div>
+  <div class="panel body">
+    <div class="head"><h3>模型用量明细</h3></div>
+    <div class="sub">今天 · 16:38 – 16:46</div>
+
+    <div class="tl">
+      <div class="ev"><div class="t mono">16:46:12</div><div class="dot" style="background:#4ade80"></div>
+        <div class="c"><div class="n">space-bunny-free <span class="x">· opencode2dsh</span></div>
+        <div class="x mono">170.9K token · 8.0s · 首字 0.9s</div></div></div>
+
+      <div class="ev"><div class="t mono">16:45:20</div><div class="dot" style="background:#4ade80"></div>
+        <div class="c"><div class="n">space-bunny-free <span class="x">· opencode2dsh</span></div>
+        <div class="x mono">170.6K token · 15.1s · 首字 1.2s</div></div></div>
+
+      <div class="ev"><div class="t mono">16:44:33</div><div class="dot" style="background:#f87171"></div>
+        <div class="c"><div class="n">step-5-preview-free <span class="x">· opencode2dsh</span></div>
+        <div class="x mono">PT_AI_ERROR · 45.9s · 会话 s-7742</div></div></div>
+
+      <div class="ev"><div class="t mono">16:43:22</div><div class="dot" style="background:#4ade80"></div>
+        <div class="c"><div class="n">deepseek-v4.1-flash <span class="x">· workbuddy-global</span></div>
+        <div class="x mono">530.2K token · 65.3s · 首字 2.1s · 会话 s-1180</div></div></div>
+
+      <div class="ev"><div class="t mono">16:42:08</div><div class="dot" style="background:#4ade80"></div>
+        <div class="c"><div class="n">step-5-preview <span class="x">· workbuddy-global</span></div>
+        <div class="x mono">1.2M token · 35.0s · 首字 1.8s</div></div></div>
+
+      <div class="ev"><div class="t mono">16:40:47</div><div class="dot" style="background:#f87171"></div>
+        <div class="c"><div class="n">step-5-preview-free <span class="x">· opencode2dsh</span></div>
+        <div class="x mono">PT_AI_ERROR · 9.3s · 会话 s-7742</div></div></div>
+
+      <div class="ev"><div class="t mono">16:39:12</div><div class="dot" style="background:#4ade80"></div>
+        <div class="c"><div class="n">deepseek-v4.1-flash <span class="x">· workbuddy-global</span></div>
+        <div class="x mono">160.1M token · 3047.0s · 首字 1.4s · 会话 s-1180</div></div></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
