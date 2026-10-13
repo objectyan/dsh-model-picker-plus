@@ -1199,11 +1199,19 @@ console.log('\n== 用量展示与排序 ==');
     // 真实渲染效果在浏览器里验证。
     const src = readFileSync(join(root, 'client.js'), 'utf8');
     const page = src.slice(src.indexOf('const UsageDetailPage'), src.indexOf('exports.name'));
-    check('无 RPC 时报错而非空白', page.includes('Usage RPC'));
+    check('无 RPC 时报错而非空白', page.includes('usageRpcMissing'));
     check('明细表包含表头字段', ['usageColTime', 'usageColProvider', 'usageColModel', 'usageColTokens', 'usageColDuration', 'usageColStatus']
       .every(key => page.includes(key)));
     check('明细表逐行呈现每一条请求', page.includes('rows.map'));
     check('失败请求有区分标记', page.includes('usageFailed') && page.includes('row.ok'));
+
+    // 作用域回归：apply 顶层不得引用组件注入回调里才定义的 RPC 取件器
+    // （实测它会抛 ReferenceError，宿主把整个 settings.section 卸载）。
+    // 定义与引用都在同一文件，靠「除定义行外还有没有第二次出现」来判定。
+    const uses = src.split('usageRpcForSettings').length - 1;
+    check('RPC 取件器只出现一次（仅定义，无跨作用域引用）', uses === 1, `occurrences=${uses}`);
+    check('RPC 通道在注册时经闭包解析',
+      src.slice(src.indexOf('function apply(ctx)')).includes('resolveSettingsRpc(ctx)'));
   }
 
   // 用户不该记住「推荐页要点右边按钮、其它页点整行」这种不一致的规则。

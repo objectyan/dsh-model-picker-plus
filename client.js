@@ -128,6 +128,7 @@ window.__ModuleLoader__.load({
         usageTitle: '调用 {calls} 次 · {tokens} token · 耗时 {duration}',
         // 设置页：用量明细表
         usageDetailTitle: '模型用量明细',
+        usageRpcMissing: '读取通道不可用（请确认宿主 Connection 服务正常）',
         usageDetailCallsLabel: '记录数',
         usageColTime: '时间',
         usageColProvider: '提供方',
@@ -222,6 +223,7 @@ window.__ModuleLoader__.load({
         usageTitle: '{calls} calls · {tokens} tokens · {duration}',
         // Settings page: usage detail table
         usageDetailTitle: 'Model usage detail',
+        usageRpcMissing: 'Reading channel unavailable (check that the host Connection service is healthy)',
         usageDetailCallsLabel: 'records',
         usageColTime: 'Time',
         usageColProvider: 'Provider',
@@ -2721,6 +2723,16 @@ window.__ModuleLoader__.load({
       }
 
       if (typeof ctx.inject !== 'function') return;
+      // 设置页用的 RPC 通道：在 apply 作用域解析（注册时经闭包交给组件）。
+      // 只在真正需要时取一次，取不到就返回 null——组件会显示明确的错误，
+      // 而不是把整个 settings.section 拖崩（那是上一个版本的真实故障）。
+      const resolveSettingsRpc = (ownerCtx) => {
+        try {
+          const ns = typeof ownerCtx?.get === 'function' ? ownerCtx.get('connection') : undefined;
+          if (ns && typeof ns.rpc?.call === 'function') return ns.rpc;
+        } catch { /* 取不到就让组件显示错误 */ }
+        return null;
+      };
       ctx.inject(['slots', 'modelDirectories', 'sessions'], (scope) => {
         const slots = scope.slots;
         const modelDirectories = scope.modelDirectories;
@@ -2733,6 +2745,10 @@ window.__ModuleLoader__.load({
         // id / order / label 三个字段 —— 写成 `{ render: fn }` 会被静默忽略，
         // 表现为「左侧条目在、右侧空白」（实测踩过）。
         // 对齐官方 dshmarket：`slots.register({...}, (props) => element)`。
+        //
+        // 注意：这里**不能**调用组件 inject 回调里的那个 RPC 取件器 ——
+        // apply 顶层引用不到，会抛 ReferenceError，导致整个 settings.section
+        // 被宿主卸载（实测踩过）。RPC 通道用闭包解析后交给组件，组件自己兜底。
         try {
           if (slots && typeof slots.inject === 'function') {
             slots.inject('settings.section', () => slots.register({
@@ -2741,9 +2757,8 @@ window.__ModuleLoader__.load({
               order: 20,
               label: () => translate('usageDetailTitle'),
               locale: NS,
-              inject: () => ({ t: translate, rpc: usageRpcForSettings() }),
-            }, (props) => React.createElement(UsageDetailPage, {
-              rpc: props?.rpc ?? usageRpcForSettings(),
+            }, () => React.createElement(UsageDetailPage, {
+              rpc: resolveSettingsRpc(ctx),
             })));
             mark('settings.section registered');
           }
@@ -3161,21 +3176,29 @@ window.__ModuleLoader__.load({
     // 模型选择器里只放得下「N 次调用 · X tok」这样的一枚胶囊；完整明细
     // （每次请求的时间、耗时、token、成功/失败）放在设置页，需要时再来看。
     // 通过 settings.section 注册成设置页的一个独立条目。
+    //
+    // 自包含组件：设置页没有会话上下文，translate / colors / RPC 通道都自己拿，
+    // 不依赖 ModelPickerPlus 的 inject 作用域（那边的 RPC 取件器是组件局部
+    // 函数，apply 顶层引用不到 —— 曾经因此抛 ReferenceError 把整个
+    // settings.section 卸载掉）。
     const UsageDetailPage = memo(function UsageDetailPage({ rpc, onClose }) {
-      // 自包含：设置页没有会话上下文，translate/colors 由插件自己拿，
-      // 不依赖 ModelPickerPlus 的作用域。
       const t = translate;
       const [snapshot, setSnapshot] = useState(null);
       const [error, setError] = useState(null);
       const [loading, setLoading] = useState(true);
+      // props.rpc 优先（宿主可能直接给通道）；否则自己向宿主取。
+      const channel = rpc ?? ctxRpcChannel();
+      const channelRef = useRef(channel);
+      channelRef.current = channel;
 
       useEffect(() => {
-        if (!rpc || typeof rpc.call !== 'function') {
-          setError('Usage RPC 不可用'); setLoading(false); return undefined;
+        const active = channelRef.current;
+        if (!active || typeof active.call !== 'function') {
+          setError(t('usageRpcMissing')); setLoading(false); return undefined;
         }
         let cancelled = false;
         Promise.resolve()
-          .then(() => rpc.call('/api', 'model-picker-plus-usage/snapshot', { limit: 200 }))
+          .then(() => active.call('/api', 'model-picker-plus-usage/snapshot', { limit: 200 }))
           .then((result) => {
             if (cancelled) return;
             const value = result?.value;
