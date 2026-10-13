@@ -2728,6 +2728,11 @@ window.__ModuleLoader__.load({
 
         // 设置页：模型用量明细（settings.section 是「每个条目一个设置页」的正式挂点）。
         // 注册条件与主槽位一致：缺 slots 能力就退让，不让插件挂载失败。
+        //
+        // 组件必须作为 register 的**第二个参数**传入。契约里只声明
+        // id / order / label 三个字段 —— 写成 `{ render: fn }` 会被静默忽略，
+        // 表现为「左侧条目在、右侧空白」（实测踩过）。
+        // 对齐官方 dshmarket：`slots.register({...}, (props) => element)`。
         try {
           if (slots && typeof slots.inject === 'function') {
             slots.inject('settings.section', () => slots.register({
@@ -2735,11 +2740,11 @@ window.__ModuleLoader__.load({
               id: 'model-picker-plus-usage',
               order: 20,
               label: () => translate('usageDetailTitle'),
-              render: (props) => React.createElement(UsageDetailPage, {
-                rpc: props?.rpc ?? usageRpcForSettings(),
-                onClose: props?.onClose,
-              }),
-            }));
+              locale: NS,
+              inject: () => ({ t: translate, rpc: usageRpcForSettings() }),
+            }, (props) => React.createElement(UsageDetailPage, {
+              rpc: props?.rpc ?? usageRpcForSettings(),
+            })));
             mark('settings.section registered');
           }
         } catch (error) {

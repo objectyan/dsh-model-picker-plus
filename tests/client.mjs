@@ -1186,7 +1186,10 @@ console.log('\n== 用量展示与排序 ==');
     && settingsReg.options.id.length > 0, String(settingsReg?.options?.id));
   check('设置页有 label', typeof settingsReg?.options?.label === 'function'
     || typeof settingsReg?.options?.label === 'string');
-  check('设置页有 render', typeof settingsReg?.options?.render === 'function');
+  // 组件必须作为 register 的第二个参数：契约只声明 id/order/label，
+  // 写成 `{ render }` 会被静默忽略（表现为左侧有条目、右侧空白）。
+  check('设置页组件是 register 的第二参数', typeof settingsReg?.component === 'function');
+  check('设置页不再用未声明的 render 字段', settingsReg?.options?.render === undefined);
 
   const { UsageDetailPage } = plugin.__test;
   check('UsageDetailPage 已导出供测试驱动', typeof UsageDetailPage === 'function');
