@@ -135,6 +135,7 @@ window.__ModuleLoader__.load({
         usageColModel: '模型',
         usageColTokens: 'token',
         usageColDuration: '耗时',
+        usageTokensUnavailable: '该次请求未上报 token 用量',
         usageColStatus: '状态',
         usageOk: '成功',
         usageFailed: '失败',
@@ -230,6 +231,7 @@ window.__ModuleLoader__.load({
         usageColModel: 'Model',
         usageColTokens: 'tokens',
         usageColDuration: 'Duration',
+        usageTokensUnavailable: 'This request reported no token usage',
         usageColStatus: 'Status',
         usageOk: 'ok',
         usageFailed: 'failed',
@@ -3181,6 +3183,16 @@ window.__ModuleLoader__.load({
     // 不依赖 ModelPickerPlus 的 inject 作用域（那边的 RPC 取件器是组件局部
     // 函数，apply 顶层引用不到 —— 曾经因此抛 ReferenceError 把整个
     // settings.section 卸载掉）。
+    // 账本把 token 分桶存（inputTokens/outputTokens/cacheReadTokens），
+    // 没有 totalTokens 字段 —— 与 host 侧 totalOf() 同口径求和，
+    // 优先采信上游给出的 totalTokens。
+    function totalTokensOf(row) {
+      if (Number.isSafeInteger(row?.totalTokens) && row.totalTokens >= 0) return row.totalTokens;
+      const sum = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens']
+        .reduce((acc, key) => acc + (Number.isSafeInteger(row?.[key]) && row[key] >= 0 ? row[key] : 0), 0);
+      return sum;
+    }
+
     const UsageDetailPage = memo(function UsageDetailPage({ rpc, onClose }) {
       const t = translate;
       const [snapshot, setSnapshot] = useState(null);
@@ -3238,32 +3250,49 @@ window.__ModuleLoader__.load({
                 },
               },
                 React.createElement('table', {
-                  style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px', fontFamily: 'ui-monospace, Consolas, monospace' },
+                  style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' },
                 },
                   React.createElement('thead', null,
                     React.createElement('tr', null,
-                      [t('usageColTime'), t('usageColProvider'), t('usageColModel'), t('usageColCalls'), t('usageColTokens'), t('usageColDuration'), t('usageColStatus')]
-                        .map(head => React.createElement('th', {
+                      [t('usageColTime'), t('usageColProvider'), t('usageColModel'),
+                        t('usageColTokens'), t('usageColDuration'), t('usageColStatus')]
+                        .map((head, i) => React.createElement('th', {
                           key: head,
-                          style: { textAlign: 'left', padding: '7px 9px', color: colors.muted, fontWeight: 600, borderBottom: `1px solid ${colors.border}`, whiteSpace: 'nowrap' },
+                          style: {
+                            textAlign: i >= 3 && i <= 4 ? 'right' : 'left',
+                            padding: '7px 9px', color: colors.muted, fontWeight: 600,
+                            borderBottom: `1px solid ${colors.border}`, whiteSpace: 'nowrap',
+                          },
                         }, head)),
                     ),
                   ),
                   React.createElement('tbody', null,
-                    rows.map((row, index) => React.createElement('tr', {
-                      key: `${row.requestId ?? index}`,
-                      style: { borderBottom: `1px solid ${colors.border}` },
-                    },
-                      React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, whiteSpace: 'nowrap' } },
-                        new Date(row.startedAt).toLocaleString()),
-                      React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, whiteSpace: 'nowrap' } }, String(row.provider)),
-                      React.createElement('td', { style: { padding: '6px 9px', color: colors.text, whiteSpace: 'nowrap' } }, String(row.model)),
-                      React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, textAlign: 'right' } }, '1'),
-                      React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, textAlign: 'right' } }, String(row.totalTokens ?? '—')),
-                      React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, textAlign: 'right' } }, formatDuration(row.durationMs) || '—'),
-                      React.createElement('td', { style: { padding: '6px 9px', color: row.ok ? colors.ok : colors.danger, whiteSpace: 'nowrap' } },
-                        row.ok ? t('usageOk') : t('usageFailed')),
-                    )),
+                    rows.map((row, index) => {
+                      // 账本把 token 分桶存（input/output/cacheRead），没有 totalTokens 字段。
+                      // 这里与 host 侧 totalOf() 同口径：优先 totalTokens，否则三桶相加。
+                      const tokens = totalTokensOf(row);
+                      const hasTokens = row.usageReported === true;
+                      return React.createElement('tr', {
+                        key: `${row.requestId ?? index}`,
+                        style: { borderBottom: `1px solid ${colors.border}` },
+                      },
+                        React.createElement('td', {
+                          style: { padding: '6px 9px', color: colors.muted, whiteSpace: 'nowrap', fontFamily: 'ui-monospace, Consolas, monospace' },
+                          title: `${t('usageColTime')} ${new Date(row.startedAt).toLocaleString()}`,
+                        }, new Date(row.startedAt).toLocaleTimeString()),
+                        React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, whiteSpace: 'nowrap' } }, String(row.provider)),
+                        React.createElement('td', { style: { padding: '6px 9px', color: colors.text, whiteSpace: 'nowrap' } }, String(row.model)),
+                        React.createElement('td', {
+                          style: { padding: '6px 9px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, Consolas, monospace' },
+                          title: hasTokens
+                            ? `in ${row.inputTokens ?? 0} / out ${row.outputTokens ?? 0} / cache ${row.cacheReadTokens ?? 0}`
+                            : t('usageTokensUnavailable'),
+                        }, hasTokens ? formatTokens(tokens) : '—'),
+                        React.createElement('td', { style: { padding: '6px 9px', color: colors.muted, textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, Consolas, monospace' } }, formatDuration(row.durationMs) || '—'),
+                        React.createElement('td', { style: { padding: '6px 9px', color: row.ok ? colors.ok : colors.danger, whiteSpace: 'nowrap' } },
+                          row.ok ? t('usageOk') : t('usageFailed')),
+                      );
+                    }),
                   ),
                 ),
               ),
@@ -3321,6 +3350,7 @@ window.__ModuleLoader__.load({
       usageForRow,
       sortRowsByUsage,
       usageBadge,
+      totalTokensOf,
       requestUsageSnapshot,
       UsagePill,
       UsageDetailPage,

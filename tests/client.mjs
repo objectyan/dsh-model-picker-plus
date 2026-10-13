@@ -1200,9 +1200,21 @@ console.log('\n== 用量展示与排序 ==');
     const src = readFileSync(join(root, 'client.js'), 'utf8');
     const page = src.slice(src.indexOf('const UsageDetailPage'), src.indexOf('exports.name'));
     check('无 RPC 时报错而非空白', page.includes('usageRpcMissing'));
+    // 账本把 token 分桶存，没有 totalTokens 字段。逐请求视图必须自己求和，
+    // 否则整列显示 '—'（实测踩过：设置页 token 列全是破折号）。
+    const { totalTokensOf } = plugin.__test;
+    check('token 求和函数已导出', typeof totalTokensOf === 'function');
+    check('分桶 token 正确求和',
+      totalTokensOf({ inputTokens: 100, outputTokens: 200, cacheReadTokens: 50 }) === 350);
+    check('优先采用 totalTokens',
+      totalTokensOf({ totalTokens: 999, inputTokens: 1, outputTokens: 1 }) === 999);
+    check('缺字段按 0 计，不产生 NaN',
+      Number.isFinite(totalTokensOf({ inputTokens: 10 })) && totalTokensOf({ inputTokens: 10 }) === 10);
+
     check('明细表包含表头字段', ['usageColTime', 'usageColProvider', 'usageColModel', 'usageColTokens', 'usageColDuration', 'usageColStatus']
       .every(key => page.includes(key)));
-    check('明细表逐行呈现每一条请求', page.includes('rows.map'));
+    check('明细表不再有无意义的「调用」列', !page.includes("t('usageColCalls')"));
+    check('明细表用 usageReported 判断 token 是否可用', page.includes('row.usageReported'));
     check('失败请求有区分标记', page.includes('usageFailed') && page.includes('row.ok'));
 
     // 作用域回归：apply 顶层不得引用组件注入回调里才定义的 RPC 取件器
