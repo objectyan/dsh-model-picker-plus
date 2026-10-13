@@ -3339,12 +3339,19 @@ window.__ModuleLoader__.load({
         key: label,
         style: { textAlign: align ?? 'left', padding: '7px 9px', color: colors.muted, fontWeight: 600, borderBottom: `1px solid ${colors.border}`, whiteSpace: 'nowrap', fontSize: '11.5px' },
       }, label);
-      // 单元格：cell(content, { style 覆盖 }) —— 内容可含 React 节点。
-      const td = (content, style) => React.createElement('td', {
-        style: { padding: '6px 9px', borderBottom: `1px solid ${colors.border}`, color: colors.muted, whiteSpace: 'nowrap', ...style },
+      // 单元格：内容超长时省略而不是把表格撑破 —— 窄栏下撑破会让最后一列
+      // （状态）被裁成半个词（实测 RATE_LIMIT → RATE_L），全文悬停可见。
+      const td = (content, style, title) => React.createElement('td', {
+        title,
+        style: {
+          padding: '6px 9px', borderBottom: `1px solid ${colors.border}`,
+          color: colors.muted, maxWidth: '220px', overflow: 'hidden',
+          textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...style,
+        },
       }, content);
+      // 表格容器：横向也可滚，内容再宽也不裁掉内容本身。
       const table = (heads, body) => React.createElement('div', {
-        style: { flex: 1, minHeight: 0, overflowY: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px' },
+        style: { flex: 1, minHeight: 0, overflow: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px' },
       }, React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } },
         React.createElement('thead', null, React.createElement('tr', null, heads)),
         React.createElement('tbody', null, body)));
@@ -3361,47 +3368,59 @@ window.__ModuleLoader__.load({
             }, t('close'))
             : null,
         ),
-        // ── 三视图标签 ──────────────────────────────────────
-        React.createElement('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
-          [['rows', t('usageTabRows')], ['summary', t('usageTabSummary')], ['timeline', t('usageTabTimeline')]]
-            .map(([id, label]) => React.createElement('button', {
-              key: id,
-              type: 'button',
-              'aria-pressed': tab === id,
-              onClick: () => setTab(id),
-              style: {
-                padding: '5px 13px', borderRadius: '999px', fontSize: '12px', cursor: 'pointer',
-                border: `1px solid ${tab === id ? colors.accent : colors.border}`,
-                background: tab === id ? tint(colors.accent, 12) : 'transparent',
-                color: tab === id ? colors.accent : colors.muted,
-              },
-            }, label)),
+        // ── 工具栏：视图标签 / 状态筛选 / 搜索 ────────────────
+        //
+        // 两组按钮必须各占一个 flex 容器并允许换行：挤在同一个容器里时，
+        // 设置页宽度不够会把 6 个胶囊压成竖排文字（实测踩过）。
+        React.createElement('div', {
+          style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' },
+        },
+          React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 'none' } },
+            [['rows', t('usageTabRows')], ['summary', t('usageTabSummary')], ['timeline', t('usageTabTimeline')]]
+              .map(([id, label]) => React.createElement('button', {
+                key: id,
+                type: 'button',
+                'aria-pressed': tab === id,
+                onClick: () => setTab(id),
+                style: {
+                  padding: '5px 13px', borderRadius: '999px', fontSize: '12px', cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  border: `1px solid ${tab === id ? colors.accent : colors.border}`,
+                  background: tab === id ? tint(colors.accent, 12) : 'transparent',
+                  color: tab === id ? colors.accent : colors.muted,
+                },
+              }, label)),
+          ),
           // 状态筛选 + 搜索：三个视图共用，切标签不丢上下文
-          [['all', t('usageFilterAll')], ['ok', t('usageFilterOk')], ['failed', t('usageFilterFailed')]]
-            .map(([id, label]) => React.createElement('button', {
-              key: id,
-              type: 'button',
-              'aria-pressed': statusFilter === id,
-              onClick: () => setStatusFilter(id),
-              style: {
-                padding: '4px 11px', borderRadius: '999px', fontSize: '11.5px', cursor: 'pointer',
-                border: `1px solid ${statusFilter === id ? colors.accent : colors.border}`,
-                background: statusFilter === id ? tint(colors.accent, 12) : 'transparent',
-                color: statusFilter === id ? colors.accent : colors.muted,
-              },
-            }, label)),
-          React.createElement('input', {
+          React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
+            [['all', t('usageFilterAll')], ['ok', t('usageFilterOk')], ['failed', t('usageFilterFailed')]]
+              .map(([id, label]) => React.createElement('button', {
+                key: id,
+                type: 'button',
+                'aria-pressed': statusFilter === id,
+                onClick: () => setStatusFilter(id),
+                style: {
+                  padding: '4px 11px', borderRadius: '999px', fontSize: '11.5px', cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  border: `1px solid ${statusFilter === id ? colors.accent : colors.border}`,
+                  background: statusFilter === id ? tint(colors.accent, 12) : 'transparent',
+                  color: statusFilter === id ? colors.accent : colors.muted,
+                },
+              }, label)),
+            React.createElement('input', {
             type: 'search',
             value: query,
             placeholder: t('usageSearchPlaceholder'),
             'aria-label': t('usageSearchPlaceholder'),
             onChange: (event) => setQuery(event?.target?.value ?? ''),
             style: {
-              marginLeft: 'auto', width: '190px', padding: '5px 10px', fontSize: '12px',
+              flex: '1 1 150px', minWidth: '130px', maxWidth: '230px',
+              padding: '5px 10px', fontSize: '12px',
               background: colors.panel ?? '#1a1a1c', color: colors.text,
               border: `1px solid ${colors.border}`, borderRadius: '7px', outline: 'none',
             },
           }),
+          ),
         ),
         loading
           ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px' } }, t('loading'))
@@ -3413,7 +3432,7 @@ window.__ModuleLoader__.load({
               : tab === 'summary'
                 // ── 视图 B：按模型汇总（谁用得多） ──────────────
                 ? React.createElement('div', {
-                  style: { flex: 1, minHeight: 0, overflowY: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px' },
+                  style: { flex: 1, minHeight: 0, overflow: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px' },
                 },
                   React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } },
                     React.createElement('thead', null, React.createElement('tr', null,
@@ -3521,7 +3540,9 @@ window.__ModuleLoader__.load({
                             : t('usageTokensUnavailable'),
                         }),
                         td(formatDuration(row.durationMs) || '—', { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
-                        td(row.ok ? t('usageOk') : (row.error?.code ?? t('usageFailed')), { color: row.ok ? colors.ok : colors.danger }),
+                        td(row.ok ? t('usageOk') : (row.error?.code ?? t('usageFailed')),
+                          { color: row.ok ? colors.ok : colors.danger, maxWidth: 'none', fontFamily: 'ui-monospace, Consolas, monospace' },
+                          row.ok ? t('usageOk') : `${row.error?.code ?? t('usageFailed')}`),
                       );
                     }),
                   ),

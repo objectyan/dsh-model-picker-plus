@@ -1250,6 +1250,25 @@ console.log('\n== 用量展示与排序 ==');
     check('三个视图标签齐备', ['usageTabRows', 'usageTabSummary', 'usageTabTimeline']
       .every(key => src.includes(`usageTab${key.slice(8)}:`) || src.includes(key)));
     check('视图由 tab 状态切换', page.includes("useState('rows')") && page.includes("tab === 'summary'") && page.includes("tab === 'timeline'"));
+
+    // 布局回归（实测踩过）：6 个胶囊挤在同一个 flex 容器且不允许换行时，
+    // 窄栏会把它们压成竖排单字（截图里「明细」被拆成上下两个字）。
+    // 只取工具栏那一段：从注释锚点到 loading 三元分支为止。
+    // 结束锚不能取 i18n 键名（它们在标签数组里出现得更早，会把工具栏尾部切掉）。
+    const tbStart = page.indexOf('工具栏');
+    const tbEnd = page.indexOf("t('loading')", tbStart);
+    const toolbar = tbStart > 0 && tbEnd > tbStart ? page.slice(tbStart, tbEnd) : '';
+    check('工具栏锚点可定位', toolbar.length > 0, `start=${tbStart} end=${tbEnd}`);
+    check('工具栏容器允许换行', /flexWrap: 'wrap'/.test(toolbar), 'toolbar must wrap');
+    check('视图标签与筛选分组到独立容器',
+      toolbar.includes("flex: 'none'") && toolbar.includes("flex: '1 1 260px'"));
+    check('胶囊按钮禁止文字折行', (toolbar.match(/whiteSpace: 'nowrap'/g) ?? []).length >= 2);
+    check('搜索框有最小宽度且不被固定宽度挤爆',
+      page.includes("flex: '1 1 150px'") && page.includes("minWidth: '130px'"));
+    // 表格回归：状态列曾被裁成 RATE_L（列被内容撑破 + nowrap 又无省略）。
+    check('单元格超长时省略而非撑破表格', page.includes("textOverflow: 'ellipsis'") && page.includes('maxWidth'));
+    check('表格容器横向可滚', /overflow: 'auto'/.test(page));
+    check('状态单元格保留完整错误码到 title', page.includes("td(row.ok ? t('usageOk')") && page.includes('row.error?.code'));
   }
 
   // 用户不该记住「推荐页要点右边按钮、其它页点整行」这种不一致的规则。
