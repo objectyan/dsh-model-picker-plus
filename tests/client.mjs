@@ -14,7 +14,11 @@ const source = readFileSync(join(root, 'client.js'), 'utf8');
 function makeReact() {
   let stateOverrides = null;
   let stateCall = 0;
+  // 记录每次 setState 的 (槽位, 值)，让「点了一下有没有真的改状态」
+  // 变成可断言的事 —— 否则 onClick 里写错 setter 也照样渲染得出东西来。
+  const setterCalls = [];
   const React = {
+    setterCalls,
     createElement: (type, props, ...children) => typeof type === 'function'
       ? type({ ...(props ?? {}), children })
       : ({ type, props: props ?? {}, children }),
@@ -24,7 +28,7 @@ function makeReact() {
       const value = stateOverrides?.has(index)
         ? stateOverrides.get(index)
         : (typeof initial === 'function' ? initial() : initial);
-      return [value, () => {}];
+      return [value, (next) => { setterCalls.push({ index, next }); }];
     },
     useEffect: () => {},
     // 标签栏用 useLayoutEffect 做实测；测试里不跑真实测量，等同 useEffect。
@@ -1367,6 +1371,94 @@ console.log('\n== 用量展示与排序 ==');
     }
     check('分时视图已挂在第二层', page.includes('usageL2Hours') && page.includes('summarizeUsageByHour(providerRows)'));
     check('分时柱形按成功/失败堆叠', page.includes('flexGrow: b.failed') && page.includes('flexGrow: b.ok'));
+
+    // ── 交互回归（用户报告「点击按钮没有反应」）──────────────────
+    // 光看代码里写了 onClick 不算数：setter 写错、状态槽位错位、聚合把
+    // 列表清空导致根本没渲染出卡片，都会表现为「点了没反应」。
+    // 这里喂一份真快照，把卡片找出来，真的调用它的 onClick，再断言状态确实变了。
+    const t0 = Date.UTC(2026, 9, 14, 2, 0, 0); // 本地 10:00（UTC+8）
+    const usageSnapshot = {
+      schemaVersion: 2,
+      status: { recordCount: 5 },
+      recent: [
+        { provider: 'alpha', model: 'm1', ok: true, durationMs: 5000, usageReported: true, inputTokens: 10, outputTokens: 5, startedAt: t0, timezoneOffsetMinutes: -480, requestId: 'a1' },
+        { provider: 'alpha', model: 'm1', ok: false, durationMs: 900, usageReported: false, startedAt: t0 + 1000, timezoneOffsetMinutes: -480, requestId: 'a2', error: { code: 'RATE_LIMIT' } },
+        { provider: 'alpha', model: 'm3', ok: true, durationMs: 700, usageReported: true, inputTokens: 2, outputTokens: 2, startedAt: t0 + 2000, timezoneOffsetMinutes: -480, requestId: 'a3' },
+        { provider: 'zeta', model: 'zz', ok: true, durationMs: 99000, usageReported: true, inputTokens: 8000, outputTokens: 100, startedAt: t0 + 3000, timezoneOffsetMinutes: -480, requestId: 'z1' },
+        { provider: 'mid', model: 'mm', ok: true, durationMs: 40000, usageReported: true, inputTokens: 50, outputTokens: 10, startedAt: t0 + 4000, timezoneOffsetMinutes: -480, requestId: 'm1' },
+      ],
+    };
+    const walk = (node, pred, out = []) => {
+      if (!node) return out;
+      // children 可能是嵌套数组（`.map()` 当单个子节点传入时），必须继续下钻。
+      // 上一版在这里直接 return，导致 chipsOf 找到 0 个还「静默通过」。
+      if (Array.isArray(node)) { for (const c of node) walk(c, pred, out); return out; }
+      if (typeof node !== 'object') return out;
+      if (pred(node)) out.push(node);
+      for (const c of node.children ?? []) walk(c, pred, out);
+      return out;
+    };
+    const cardsOf = tree => walk(tree, n => n.props?.role === 'button' && 'aria-expanded' in (n.props ?? {}));
+    const chipsOf = tree => walk(tree, n => n.props?.type === 'button' && 'aria-pressed' in (n.props ?? {}));
+
+    modules.react.setterCalls.length = 0;
+    const l1Tree = modules.react.__withState(new Map([[0, usageSnapshot], [2, false]]),
+      () => UsageDetailPage({ rpc: null, onClose: undefined }));
+    const l1Cards = cardsOf(l1Tree);
+    check('第一层渲染出厂商卡片', l1Cards.length === 3, `cards=${l1Cards.length}`);
+    // 卡片必须有可读的身份，否则点了也不知道点的谁（也方便定位错绑）
+    check('卡片带 aria-expanded', l1Cards.every(c => c.props['aria-expanded'] === false));
+    l1Cards[0]?.props.onClick?.();
+    const drillSet = modules.react.setterCalls.filter(s => s.index === 3);
+    check('点击卡片确实写入 provider 状态', drillSet.length === 1 && drillSet[0].next === 'alpha',
+      JSON.stringify(modules.react.setterCalls.map(s => s.index)));
+    check('下钻同时清掉搜索与展开态', modules.react.setterCalls.some(s => s.index === 4)
+      && modules.react.setterCalls.some(s => s.index === 8));
+
+    // 排序按钮：必须真的改 sortBy，并且**在数据有区分度时改变顺序**。
+    // 之前用户觉得「没反应」，很可能是那份数据里四种排序恰好同序（见下）。
+    modules.react.setterCalls.length = 0;
+    const tokenChip = chipsOf(l1Tree)[1];
+    // 先确认真的找到了按钮：否则 onClick?.() 会静默跳过，测试假通过。
+    check('第一层渲染出排序胶囊', chipsOf(l1Tree).length >= 4, `chips=${chipsOf(l1Tree).length}`);
+    check('胶囊有 onClick', typeof tokenChip?.props?.onClick === 'function');
+    tokenChip?.props.onClick?.();
+    check('排序胶囊确实改 sortBy 状态', modules.react.setterCalls.some(s => s.index === 5 && s.next === 'tokens'),
+      JSON.stringify(modules.react.setterCalls.map(s => `${s.index}:${s.next}`)));
+
+    // 四种排序在同一份数据上是否同序：同序时界面看着像坏了，这是真实的可感知问题。
+    const orderFor = (key) => {
+      const list = summarizeUsageByProvider(usageSnapshot.recent);
+      const pick = { calls: e => e.calls, tokens: e => e.tokens, duration: e => e.durationMs, failures: e => e.failed }[key];
+      return list.slice().sort((a, b) => pick(b) - pick(a) || String(a.key).localeCompare(String(b.key))).map(e => e.provider).join('>');
+    };
+    const orders = new Set(['calls', 'tokens', 'duration', 'failures'].map(orderFor));
+    check('测试数据本身要能区分排序（否则这条断言没意义）', orders.size > 1,
+      [...orders].join(' | '));
+
+    // ── 下拉检索：选一项必须真的下钻 ────────────────────────────
+    const selects = walk(l1Tree, n => n.type === 'select');
+    check('第一层有厂商下拉', selects.length === 1, `selects=${selects.length}`);
+    const opts = walk(selects[0], n => n.type === 'option');
+    // 首项是占位（value=''），其余每项一个厂商
+    check('下拉列出全部厂商并带统计', opts.length === l1Cards.length + 1
+      && opts.slice(1).every(o => /— \d+ /.test(String(o.children))), `options=${opts.length}`);
+    modules.react.setterCalls.length = 0;
+    selects[0].props.onChange({ target: { value: 'zeta' } });
+    check('下拉选择触发下钻', modules.react.setterCalls.some(s => s.index === 3 && s.next === 'zeta'),
+      JSON.stringify(modules.react.setterCalls.map(s => `${s.index}:${s.next}`)));
+    modules.react.setterCalls.length = 0;
+    selects[0].props.onChange({ target: { value: '' } });
+    check('占位项不触发下钻', modules.react.setterCalls.length === 0);
+
+    // 明细搜索不得再把上面的模型卡片一起筛没（两拨过滤此前共用一个 state）。
+    const l2Tree = modules.react.__withState(
+      new Map([[0, usageSnapshot], [2, false], [3, 'alpha']]),
+      () => UsageDetailPage({ rpc: null, onClose: undefined }));
+    const rowBox = walk(l2Tree, n => n.type === 'input' && n.props?.type === 'search')[0];
+    check('明细行有独立搜索框', !!rowBox);
+    const modelSelect = walk(l2Tree, n => n.type === 'select');
+    check('第二层有模型下拉', modelSelect.length === 1, `selects=${modelSelect.length}`);
     check('warn 色有主题 token 与兜底值', /warn:\s*'var\(--dsw-alias-state-warning-primary,\s*#d9a441\)'/
       .test(src));
 

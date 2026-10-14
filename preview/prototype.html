@@ -40,6 +40,10 @@
   .chip.on{background:rgba(91,141,239,.14);border-color:var(--acc);color:var(--acc)}
   .search{flex:1 1 150px;min-width:130px;max-width:230px;padding:5px 10px;font-size:12px;background:var(--card);
           color:var(--tx);border:1px solid var(--line);border-radius:7px;font-family:inherit}
+  /* 下拉检索：厂商/模型是有限集合，点选比敲字快，选项里直接带调用数与成功率。
+     用原生 select —— 自定义弹层要面对设置页的 overflow 裁剪风险。 */
+  .pick{flex:1 1 180px;min-width:150px;max-width:300px;padding:6px 10px;font-size:12px;background:var(--panel2);
+        color:var(--tx);border:1px solid var(--line);border-radius:7px;font-family:inherit;cursor:pointer}
   .count{margin-left:auto;color:var(--dim);font-size:11.5px;font-family:ui-monospace,Consolas,monospace;white-space:nowrap}
 
   .rows{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel)}
@@ -115,7 +119,17 @@
     <div class="sech"><h2>按厂商</h2><span>点任意厂商下钻到其模型</span></div>
     <div class="bar">
       <div class="grp"><span class="chip on">按调用</span><span class="chip">按 token</span><span class="chip">按耗时</span><span class="chip">按失败率</span></div>
-      <input class="search" placeholder="搜索厂商">
+      <select class="pick" aria-label="选择厂商">
+        <option value="">选择厂商…</option>
+        <option value="opencode2dsh">opencode2dsh — 655 调用 · 49%</option>
+        <option value="workbuddy-global">workbuddy-global — 421 调用 · 93%</option>
+        <option value="dsh-provider-qoder">dsh-provider-qoder — 91 调用 · 82%</option>
+        <option value="deepseek-official">deepseek-official — 19 调用 · 89%</option>
+        <option value="workbuddy">workbuddy — 18 调用 · 100%</option>
+        <option value="openai-codex">openai-codex — 13 调用 · 15%</option>
+        <option value="google-antigravity">google-antigravity — 3 调用 · 0%</option>
+        <option value="qoder">qoder — 3 调用 · 0%</option>
+      </select>
       <span class="count">8 个厂商</span>
     </div>
 
@@ -201,7 +215,12 @@
     <div class="bar">
       <div class="grp"><span class="chip on">按调用</span><span class="chip">按 token</span><span class="chip">按耗时</span><span class="chip">按失败率</span></div>
       <div class="grp"><span class="chip on">全部</span><span class="chip">有失败</span><span class="chip">全成功</span></div>
-      <input class="search" placeholder="搜索模型">
+      <select class="pick" aria-label="展开模型">
+        <option value="">展开模型…</option>
+        <option value="step-5-preview-free">step-5-preview-free — 472 调用 · 38%</option>
+        <option value="space-bunny-free">space-bunny-free — 174 调用 · 80%</option>
+        <option value="muse-spark-1.3-contributor-free">muse-spark-1.3-contributor-free — 9 调用 · 11%</option>
+      </select>
       <span class="count">3 个模型</span>
     </div>
 
@@ -243,7 +262,7 @@
     <div class="sech"><h2>请求明细</h2><span>限定 opencode2dsh</span></div>
     <div class="bar">
       <div class="grp"><span class="chip on">全部</span><span class="chip">成功</span><span class="chip">失败</span></div>
-      <input class="search" placeholder="搜索模型">
+      <input class="search" placeholder="搜索模型 / 错误码">
       <span class="count">655 总请求数</span>
     </div>
     <div class="tw">

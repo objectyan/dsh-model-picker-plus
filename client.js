@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.7';
+    const VERSION = '0.6.0-alpha.8';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -175,7 +175,7 @@ window.__ModuleLoader__.load({
         usageFirstUse: '首次使用',
         usageLastUse: '最近使用',
         usageSearchProvider: '搜索厂商',
-        usageSearchModel: '搜索模型',
+        usageSearchModel: '搜索模型 / 错误码',
         usageSortCalls: '按调用',
         usageSortTokens: '按 token',
         usageSortDuration: '按耗时',
@@ -190,6 +190,10 @@ window.__ModuleLoader__.load({
         usageWorstHour: '最差时段',
         usageHoursInsufficient: '样本不足，暂不判断时段差异',
         usageHourCalls: '{count} 次',
+        // 下拉检索：厂商/模型是有限集合，从列表里直接点选比敲关键字快，
+        // 也不受「排序恰好同序时看不出按钮有没有生效」的影响。
+        usagePickProvider: '选择厂商…',
+        usagePickModel: '展开模型…',
         providers: '全部来源',
         noResults: '没有匹配的模型',
         retry: '重试',
@@ -336,6 +340,8 @@ window.__ModuleLoader__.load({
         usageWorstHour: 'worst hour',
         usageHoursInsufficient: 'Too few samples to judge hour-to-hour differences',
         usageHourCalls: '{count} calls',
+        usagePickProvider: 'Pick a provider…',
+        usagePickModel: 'Expand a model…',
         providers: 'All providers',
         noResults: 'No matching models',
         retry: 'Retry',
@@ -3433,7 +3439,10 @@ window.__ModuleLoader__.load({
       // 用户明确决定不按供应商归并 provider id：不同接入通道的成功率差异
       // 本身就是有用信号（workbuddy 100% vs workbuddy-global 93%）。
       const [provider, setProvider] = useState(null);
-      const [query, setQuery] = useState('');
+      // 只喂「请求明细」的逐行过滤。此前它同时过滤厂商/模型聚合列表，
+      // 于是在明细框里搜 RATE_LIMIT 会把上面的模型卡片一起清空（自己把自己筛没了）。
+      // 聚合列表改用下拉选择，不再需要文本过滤。
+      const [rowQuery, setRowQuery] = useState('');
       const [sortBy, setSortBy] = useState('calls');
       // 两个筛选器各管一层：failFilter 作用于模型聚合行，statusFilter 作用于逐请求行。
       const [failFilter, setFailFilter] = useState('all');
@@ -3462,31 +3471,29 @@ window.__ModuleLoader__.load({
       const status = snapshot?.status ?? null;
       const wrap = { padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0, overflowY: 'auto', color: colors.text };
 
-      const needle = query.trim().toLowerCase();
+      const rowNeedle = rowQuery.trim().toLowerCase();
       const sortPick = { calls: e => e.calls, tokens: e => e.tokens, duration: e => e.durationMs, failures: e => e.failed }[sortBy] ?? (e => e.calls);
       // 稳定排序：同值按 key 定序，避免每次渲染顺序跳动。
       const sorted = list => list.slice().sort((a, b) => sortPick(b) - sortPick(a) || String(a.key).localeCompare(String(b.key)));
 
       // ── 第一层：厂商 ────────────────────────────────────────
-      const l1 = useMemo(() => sorted(summarizeUsageByProvider(allRows)
-        .filter(e => !needle || e.provider.toLowerCase().includes(needle))), [allRows, needle, sortBy]);
+      const l1 = useMemo(() => sorted(summarizeUsageByProvider(allRows)), [allRows, sortBy]);
       const l1Max = useMemo(() => l1.reduce((m, e) => Math.max(m, e.calls), 0) || 1, [l1]);
 
       // ── 第二层：该厂商内的模型 + 逐请求 ─────────────────────
       const providerRows = useMemo(
         () => (provider ? allRows.filter(r => r.provider === provider) : []), [allRows, provider]);
       const l2 = useMemo(() => sorted(summarizeUsage(providerRows)
-        .filter(e => !needle || e.model.toLowerCase().includes(needle))
         .filter(e => (failFilter === 'hasFailures' ? e.failed > 0 : failFilter === 'allOk' ? e.failed === 0 : true))),
-      [providerRows, needle, sortBy, failFilter]);
+      [providerRows, sortBy, failFilter]);
       const l2Max = useMemo(() => l2.reduce((m, e) => Math.max(m, e.calls), 0) || 1, [l2]);
 
       const detailRows = useMemo(() => providerRows.filter((r) => {
         if (statusFilter === 'ok' && r.ok !== true) return false;
         if (statusFilter === 'failed' && r.ok === true) return false;
-        if (!needle) return true;
-        return `${r.model ?? ''} ${r.error?.code ?? ''}`.toLowerCase().includes(needle);
-      }).slice().reverse(), [providerRows, statusFilter, needle]);
+        if (!rowNeedle) return true;
+        return `${r.model ?? ''} ${r.error?.code ?? ''}`.toLowerCase().includes(rowNeedle);
+      }).slice().reverse(), [providerRows, statusFilter, rowNeedle]);
 
       // 分时：24 个本地钟点桶 + 只在样本够用时给出的最好/最差时段结论。
       const hours = useMemo(() => summarizeUsageByHour(providerRows), [providerRows]);
@@ -3622,14 +3629,34 @@ window.__ModuleLoader__.load({
           .map(([id, label]) => chip(id, label, sortBy === id, setSortBy)));
 
       const searchBox = placeholder => React.createElement('input', {
-        type: 'search', value: query, placeholder, 'aria-label': placeholder,
-        onChange: (event) => setQuery(event?.target?.value ?? ''),
+        type: 'search', value: rowQuery, placeholder, 'aria-label': placeholder,
+        onChange: (event) => setRowQuery(event?.target?.value ?? ''),
         style: {
           flex: '1 1 150px', minWidth: '130px', maxWidth: '230px', padding: '5px 10px', fontSize: '12px',
           background: colors.panel ?? '#1a1a1c', color: colors.text,
           border: `1px solid ${colors.border}`, borderRadius: '7px', outline: 'none',
         },
       });
+
+      // 下拉检索。厂商/模型是有限集合，从列表点选比敲关键字快，且选项里直接带
+      // 调用数与成功率——顺带解决了「只有三个厂商、四种排序恰好同序，
+      // 点排序看不出任何变化」那种像坏了的手感。
+      //
+      // 用原生 select：自定义弹层要面对设置页的 overflow 裁剪（本页已经因为
+      // 裁列出过 RATE_LIMIT 被切成 RATE_L 的事故），弹层交给系统渲染零风险。
+      const picker = (placeholder, items, onPick) => React.createElement('select', {
+        value: '', 'aria-label': placeholder,
+        onChange: (event) => { const v = event?.target?.value; if (v) onPick(v); },
+        style: {
+          flex: '1 1 180px', minWidth: '150px', maxWidth: '300px', padding: '6px 10px', fontSize: '12px',
+          background: colors.panel ?? '#1a1a1c', color: colors.text,
+          border: `1px solid ${colors.border}`, borderRadius: '7px', outline: 'none', cursor: 'pointer',
+        },
+      },
+        React.createElement('option', { value: '' }, placeholder),
+        ...items.map(it => React.createElement('option', { key: it.value, value: it.value }, it.label)),
+      );
+      const pickLabel = (name, e) => `${name} — ${e.calls} ${t('usageColCount')} · ${Math.round(e.successRate * 100)}%`;
 
       const toggleExpanded = key => setExpanded((prev) => {
         const next = new Set(prev);
@@ -3642,7 +3669,7 @@ window.__ModuleLoader__.load({
         const head = React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
           React.createElement('button', {
             type: 'button',
-            onClick: () => { setProvider(null); setExpanded(new Set()); setQuery(''); },
+            onClick: () => { setProvider(null); setExpanded(new Set()); setRowQuery(''); },
             style: { border: `1px solid ${colors.border}`, background: 'transparent', color: colors.accent, cursor: 'pointer', fontSize: '12px', padding: '4px 11px', borderRadius: '999px', whiteSpace: 'nowrap' },
           }, t('usageBackToProviders')),
           React.createElement('span', { style: { fontSize: '15px', fontWeight: 700, color: colors.text } }, String(provider)),
@@ -3668,7 +3695,9 @@ window.__ModuleLoader__.load({
             React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
               [['all', t('usageFilterAll')], ['hasFailures', t('usageFilterHasFailures')], ['allOk', t('usageFilterAllOk')]]
                 .map(([id, label]) => chip(id, label, failFilter === id, setFailFilter)),
-              searchBox(t('usageSearchModel')))),
+              picker(t('usagePickModel'),
+                l2.map(e => ({ value: e.key, label: pickLabel(e.model, e) })),
+                (v) => setExpanded(new Set([v]))))),
           l2.length === 0
             ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px', padding: '14px 0' } }, t('usageNoMatch'))
             : listShell(l2.map(e => cardRow(e, {
@@ -3811,7 +3840,9 @@ window.__ModuleLoader__.load({
                 sectionTitle(t('usageL1Title'), t('usageL1Hint')),
                 toolbar(sortChips(),
                   React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
-                    searchBox(t('usageSearchProvider')))),
+                    picker(t('usagePickProvider'),
+                      l1.map(e => ({ value: e.provider, label: pickLabel(e.provider, e) })),
+                      (v) => { setProvider(v); setExpanded(new Set()); setRowQuery(''); }))),
                 listShell(l1.map(e => cardRow(e, {
                   max: l1Max,
                   leading: e.provider,
@@ -3819,7 +3850,7 @@ window.__ModuleLoader__.load({
                     style: { flex: 'none', fontSize: '10.5px', padding: '1px 8px', borderRadius: '999px', background: colors.panel2, color: colors.muted, whiteSpace: 'nowrap' },
                   }, `${e.models.length} ${t('usageModelCountLabel')}`),
                   isOpen: false,
-                  onOpen: () => { setProvider(e.provider); setExpanded(new Set()); setQuery(''); },
+                  onOpen: () => { setProvider(e.provider); setExpanded(new Set()); setRowQuery(''); },
                 })))),
       );
     });
