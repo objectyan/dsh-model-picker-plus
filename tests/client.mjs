@@ -1625,13 +1625,23 @@ console.log('\n== 用量展示与排序 ==');
     });
     check('推荐行渲染用量徽章', JSON.stringify(withUsage).includes('"data-usage"'));
     check('推荐行没有用量时不渲染徽章', !JSON.stringify(node).includes('"data-usage"'));
-    // 徽章顺序与其它视图一致：能力胶囊 → 用量 → 收藏星
-    const pillRegion = src.slice(src.indexOf('RecommendationRow = memo'), src.indexOf('function ModelPickerPlus'));
-    const atCap = pillRegion.indexOf('CapPill, { key: badge.label');
-    const atUsage = pillRegion.indexOf('UsagePill, { badge: usage, t }');
-    const atStar = pillRegion.indexOf("}, favoriteSet.has(key) ? '★' : '☆'");
-    check('推荐行徽章顺序为 能力 → 用量 → 收藏',
-      atCap > -1 && atCap < atUsage && atUsage < atStar, `cap=${atCap} usage=${atUsage} star=${atStar}`);
+    // 上下结构：能力胶囊与用量由共用的 CapLine 渲染，排在名称/厂家下方，
+    // 收藏星与「使用」按钮留在右侧。
+    const capAt = recRegion.indexOf('React.createElement(CapLine');
+    const atStar = recRegion.indexOf("}, favoriteSet.has(key) ? '★' : '☆'");
+    check('推荐行改用共用 CapLine', capAt > -1);
+    check('推荐行 CapLine 在收藏星之前（名称下方一行）',
+      capAt > -1 && capAt < atStar, `cap=${capAt} star=${atStar}`);
+    check('推荐行不再自己维护胶囊列表', !/const badges = \[/.test(recRegion));
+    // CapLine 内部顺序仍是 能力 → 用量；并且两个视图共用同一份
+    const capRegion = src.slice(src.indexOf('const CapLine = memo'), src.indexOf('const ModelRow = memo'));
+    check('CapLine 内含能力胶囊与用量',
+      capRegion.includes('CapPill, { key:') && capRegion.includes('UsagePill, { badge: usage, t }'),
+      `len=${capRegion.length}`);
+    check('CapLine 是可换行的整幅一行（不再与名称抢宽度）',
+      /flexWrap: 'wrap'/.test(capRegion) && /marginTop: '5px'/.test(capRegion));
+    const uses = (src.match(/React\.createElement\(CapLine/g) ?? []).length;
+    check('ModelRow 与 RecommendationRow 共用 CapLine', uses === 2, `uses=${uses}`);
     // 调用点必须真的把 usage 传进去，否则组件接了参数也是空
     const callSite = src.slice(src.indexOf('recommendationRows.map(row =>'));
     check('推荐行调用点传入 usage', callSite.includes('usageBadge(usageIndex, row.group, row.model, t)'),

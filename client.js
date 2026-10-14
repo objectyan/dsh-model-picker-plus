@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.12';
+    const VERSION = '0.6.0-alpha.13';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -1558,6 +1558,33 @@ window.__ModuleLoader__.load({
           : letter);
     });
 
+    // 能力胶囊 + 用量徽章，单独占一行（上下结构）。
+    //
+    // 抽成共用构件有两个原因：
+    //  1. 排版：这些胶囊和「474 次调用 · 94.7M tok」挤在模型名右侧时，
+    //     会和名称抢同一行的宽度，窄菜单里两头都放不下。换行到名称下方，
+    //     它们就拥有整幅宽度，用量也不再被截断。
+    //  2. 一致性：此前 ModelRow 与 RecommendationRow 各写一份胶囊，
+    //     推荐页就是因为那一份里漏了用量徽章而一直没有显示（已修）。
+    //     共用一份之后，不会再出现「某个视图独缺某样东西」。
+    const CapLine = memo(function CapLine({ group, model, usage, max, t }) {
+      const pills = [
+        isFreeModel(group, model) ? React.createElement(CapPill, { key: 'free', cap: 'free', label: t('free') }) : null,
+        isVisionModel(group, model) ? React.createElement(CapPill, { key: 'vision', cap: 'vision', label: t('vision') }) : null,
+        isOmniModel(model) ? React.createElement(CapPill, { key: 'omni', cap: 'omni', label: t('omni') }) : null,
+        // 标题旁已有档位胶囊的模型不再重复挂「推理」——两者语义重叠，
+        // 并排显示既占宽又啰嗦。只有「固定开启推理、无档位可调」的模型才需要它。
+        isReasoningModel(model) && !hasSwitchableEffort(model)
+          ? React.createElement(CapPill, { key: 'reason', cap: 'reason', label: t('reasoning') }) : null,
+        hasToolsModel(model) ? React.createElement(CapPill, { key: 'tools', cap: 'tools', label: t('tools') }) : null,
+      ].filter(Boolean);
+      const shown = max ? pills.slice(0, max) : pills;
+      if (shown.length === 0 && !usage) return null;
+      return React.createElement('span', {
+        style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', marginTop: '5px' },
+      }, ...shown, React.createElement(UsagePill, { badge: usage, t }));
+    });
+
     const ModelRow = memo(function ModelRow({ group, model, current, favoriteKey, favorite, onFavorite, onSelect, showProvider, showProviderBadge, usage, t }) {
       const selected = current?.provider === group.id && current?.model === model.id;
       const distinctName = isDistinctText(model.name, model.id);
@@ -1638,20 +1665,11 @@ window.__ModuleLoader__.load({
               style: { display: 'block', color: colors.muted, fontSize: '11px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
             }, model.description)
             : null,
+          // 能力与用量换到名称下方，拥有整幅宽度
+          React.createElement(CapLine, { group, model, usage, t }),
         ),
+        // 右侧只留收藏星：能力胶囊与用量徽章已换到名称下方（见 CapLine）。
         React.createElement('span', { style: { flex: 'none', display: 'flex', alignItems: 'center', gap: '4px' } },
-          isFreeModel(group, model) ? React.createElement(CapPill, { cap: 'free', label: t('free') }) : null,
-          isVisionModel(group, model) ? React.createElement(CapPill, { cap: 'vision', label: t('vision') }) : null,
-          isOmniModel(model) ? React.createElement(CapPill, { cap: 'omni', label: t('omni') }) : null,
-          // 标题旁已有档位胶囊的模型，不再重复挂「推理」——两者语义重叠，
-          // 并排显示既占宽又啰嗦。只有「固定开启推理、无档位可调」的模型
-          // 才需要这枚胶囊来表明推理能力。
-          isReasoningModel(model) && !hasSwitchableEffort(model)
-            ? React.createElement(CapPill, { cap: 'reason', label: t('reasoning') })
-            : null,
-          hasToolsModel(model) ? React.createElement(CapPill, { cap: 'tools', label: t('tools') }) : null,
-          // 用量徽章放在能力胶囊之后、收藏星之前：视觉顺序「能做什么 → 用了多少 → 收藏」。
-          React.createElement(UsagePill, { badge: usage, t }),
           React.createElement('button', {
             type: 'button',
             title: favorite ? t('removeFavorite') : t('addFavorite'),
@@ -1696,12 +1714,8 @@ window.__ModuleLoader__.load({
       const { group, model } = row;
       const key = modelKey(group.id, model.id);
       const selected = current?.provider === group.id && current?.model === model.id;
-      const badges = [
-        isReasoningModel(model) ? { cap: 'reason', label: t('reasoning') } : null,
-        isVisionModel(group, model) ? { cap: 'vision', label: t('vision') } : null,
-        hasToolsModel(model) ? { cap: 'tools', label: t('tools') } : null,
-        isFreeModel(group, model) ? { cap: 'free', label: t('free') } : null,
-      ].filter(Boolean).slice(0, 3);
+      // 能力胶囊与用量改由共用的 CapLine 渲染（见其注释）。
+      // 这里原本自己维护了一份 badges 列表，正是它漏掉用量徽章的根源。
       // 整行可点：与其它视图的 ModelRow 行为一致——用户不该记住
       // 「推荐页要点右边按钮、其它页点整行」这种不一致的规则。
       // 收藏星与「使用」按钮仍然是独立控件，不会因为整行可点而失效
@@ -1746,13 +1760,10 @@ window.__ModuleLoader__.load({
           ),
           // 推荐理由只跟任务有关，在顶部说明条统一展示；行内只保留厂家归属。
           React.createElement('div', { style: { color: colors.muted, fontSize: '10.5px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(group.name)),
+          // 能力与用量换到名称下方，与其它视图同一套 CapLine
+          React.createElement(CapLine, { group, model, usage, max: 3, t }),
         ),
         React.createElement('div', { style: { flex: 'none', display: 'flex', alignItems: 'center', gap: '5px' } },
-          badges.map(badge => React.createElement(CapPill, { key: badge.label, cap: badge.cap, label: badge.label })),
-          // 与其它视图同一顺序：能做什么 → 用了多少 → 收藏。
-          // 此前推荐页独独没有用量徽章，用户在推荐页看不到「这个模型我用过几次、
-          // 成了几次」，只能切到全部/最近页去找同一条信息。
-          React.createElement(UsagePill, { badge: usage, t }),
           React.createElement('button', {
             type: 'button',
             title: favoriteSet.has(key) ? t('removeFavorite') : t('addFavorite'),
