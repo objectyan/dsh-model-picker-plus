@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.13';
+    const VERSION = '0.6.0-alpha.14';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -1558,12 +1558,11 @@ window.__ModuleLoader__.load({
           : letter);
     });
 
-    // 能力胶囊 + 用量徽章，单独占一行（上下结构）。
+    // 能力胶囊 + 用量徽章，两者上下排列，整体位于名称下方。
     //
     // 抽成共用构件有两个原因：
-    //  1. 排版：这些胶囊和「474 次调用 · 94.7M tok」挤在模型名右侧时，
-    //     会和名称抢同一行的宽度，窄菜单里两头都放不下。换行到名称下方，
-    //     它们就拥有整幅宽度，用量也不再被截断。
+    //  1. 排版：胶囊与「474 次调用 · 94.7M tok」并排时互相抢宽度，
+    //     胶囊一多就把用量挤到行尾甚至截断；各占一行之后互不干扰。
     //  2. 一致性：此前 ModelRow 与 RecommendationRow 各写一份胶囊，
     //     推荐页就是因为那一份里漏了用量徽章而一直没有显示（已修）。
     //     共用一份之后，不会再出现「某个视图独缺某样东西」。
@@ -1580,9 +1579,15 @@ window.__ModuleLoader__.load({
       ].filter(Boolean);
       const shown = max ? pills.slice(0, max) : pills;
       if (shown.length === 0 && !usage) return null;
+      // 能力胶囊与用量徽章**各自一行**（上下结构）：两者并排时会互相抢同一行的
+      // 宽度，胶囊一多用量就被挤到行尾。纵向排开之后各占整幅，互不干扰。
       return React.createElement('span', {
-        style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', marginTop: '5px' },
-      }, ...shown, React.createElement(UsagePill, { badge: usage, t }));
+        style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px', marginTop: '5px' },
+      },
+        shown.length
+          ? React.createElement('span', { style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' } }, ...shown)
+          : null,
+        React.createElement(UsagePill, { badge: usage, t }));
     });
 
     const ModelRow = memo(function ModelRow({ group, model, current, favoriteKey, favorite, onFavorite, onSelect, showProvider, showProviderBadge, usage, t }) {
@@ -4043,6 +4048,7 @@ window.__ModuleLoader__.load({
       hourExtremes,
       requestUsageSnapshot,
       UsagePill,
+      CapLine,
       UsageDetailPage,
       RecommendationRow,
       USAGE_SORTS,

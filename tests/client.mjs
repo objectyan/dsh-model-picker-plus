@@ -1638,10 +1638,35 @@ console.log('\n== 用量展示与排序 ==');
     check('CapLine 内含能力胶囊与用量',
       capRegion.includes('CapPill, { key:') && capRegion.includes('UsagePill, { badge: usage, t }'),
       `len=${capRegion.length}`);
-    check('CapLine 是可换行的整幅一行（不再与名称抢宽度）',
-      /flexWrap: 'wrap'/.test(capRegion) && /marginTop: '5px'/.test(capRegion));
+    check('CapLine 纵向排列（能力与用量各占一行）',
+      /flexDirection: 'column'/.test(capRegion) && /marginTop: '5px'/.test(capRegion));
+    // 胶囊自己一行（可换行），用量是它的兄弟节点而不是同一行的第 N 个胶囊
+    check('能力行独立可换行、用量另起一行',
+      /alignItems: 'center', gap: '4px', flexWrap: 'wrap' \} \}, \.\.\.shown\)/.test(capRegion)
+      && /\.\.\.shown\)[\s\S]*UsagePill/.test(capRegion));
     const uses = (src.match(/React\.createElement\(CapLine/g) ?? []).length;
     check('ModelRow 与 RecommendationRow 共用 CapLine', uses === 2, `uses=${uses}`);
+
+    // 直接渲染 CapLine 验结构：正则只能证明"写了"，不能证明"排成两行"。
+    const { CapLine } = plugin.__test;
+    check('CapLine 已导出供测试驱动', typeof CapLine === 'function');
+    if (typeof CapLine === 'function') {
+      const capGroup = { id: 'g', name: 'G' };
+      const capModel = { id: 'vision-x', name: 'Vision X', tools: true };
+      const usageBadge = { calls: 12, okCalls: 10, failedCalls: 2, tokens: 34567, durationMs: 89000, tokensLabel: '34.6K', durationLabel: '1.5m' };
+      const node = CapLine({ group: capGroup, model: capModel, usage: usageBadge, t });
+      check('CapLine 是纵向容器', node?.props?.style?.flexDirection === 'column',
+        JSON.stringify(node?.props?.style ?? null));
+      const kids = (node?.children ?? []).filter(Boolean);
+      check('能力行与用量是两个独立子节点', kids.length === 2, `kids=${kids.length}`);
+      check('用量独占最后一行', JSON.stringify(kids[kids.length - 1]).includes('"data-usage"'));
+      check('能力行里不掺用量徽章', !JSON.stringify(kids[0]).includes('"data-usage"'));
+      check('能力行自己可换行', kids[0]?.props?.style?.flexWrap === 'wrap');
+      const noUsage = CapLine({ group: capGroup, model: capModel, usage: null, t });
+      check('无用量时只剩能力行', noUsage && !JSON.stringify(noUsage).includes('"data-usage"'));
+      check('既无能力也无用量时整体不渲染',
+        CapLine({ group: { id: 'g', name: 'G' }, model: { id: 'x1', name: 'X1' }, usage: null, t }) === null);
+    }
     // 调用点必须真的把 usage 传进去，否则组件接了参数也是空
     const callSite = src.slice(src.indexOf('recommendationRows.map(row =>'));
     check('推荐行调用点传入 usage', callSite.includes('usageBadge(usageIndex, row.group, row.model, t)'),
