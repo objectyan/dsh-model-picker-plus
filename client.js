@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.3';
+    const VERSION = '0.6.0-alpha.4';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -3451,42 +3451,51 @@ window.__ModuleLoader__.load({
       }, ...groups);
 
       // 卡片行：第一层（厂商）与第二层（模型）共用同一套版式。
-      // 用行卡片而不是密集表格 —— 表格在窄设置页里会把列挤成半个词。
+      // 固定三行、每行不换行。此前把 6 个数字塞进一个 flexWrap 容器，
+      // 窄面板里每行断点不同（实测截图：八张卡片参差成两种高度，
+      // 有的「4h28m 335失败 49%」整段掉到第二行），看着就是乱。
       const cardRow = (e, { max, leading, badge, isOpen, onOpen }) => React.createElement('div', {
         key: e.key,
         role: 'button', tabIndex: 0, 'aria-expanded': !!isOpen,
         onClick: onOpen,
         onKeyDown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onOpen(); } },
         style: {
-          padding: '12px 14px', borderBottom: `1px solid ${colors.border}`, cursor: 'pointer',
+          padding: '11px 14px 12px', borderBottom: `1px solid ${colors.border}`, cursor: 'pointer',
           borderLeft: `3px solid ${rateColor(e.successRate)}`,
           background: isOpen ? tint(colors.accent, 6) : 'transparent',
         },
       },
-      React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '13px', flexWrap: 'wrap' } },
-        React.createElement('span', { style: { width: '11px', flex: 'none', color: colors.muted, fontSize: '9px' } }, isOpen ? '▾' : '▸'),
-        React.createElement('span', { style: { display: 'flex', alignItems: 'baseline', gap: '9px', flex: '1 1 190px', minWidth: 0 } },
-          React.createElement('b', {
-            title: leading,
-            style: { fontSize: '13.5px', fontWeight: 650, color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-          }, leading),
-          badge),
-        // 用量条：按本层最大值归一；颜色即成功率，条长即用量
-        React.createElement('span', {
-          title: `${e.calls}`,
-          style: { height: '5px', width: '84px', flex: 'none', background: colors.panel2, borderRadius: '3px', overflow: 'hidden' },
-        }, React.createElement('span', {
-          style: { display: 'block', height: '100%', width: `${Math.max(2, Math.round((e.calls / max) * 100))}%`, background: rateColor(e.successRate) },
-        })),
-        stat(String(e.calls), { minWidth: '44px', color: colors.text }),
-        stat(e.tokenReported > 0 ? (formatTokens(e.tokens) || '—') : '—', { color: colors.muted, minWidth: '60px' }),
-        stat(formatDuration(e.durationMs) || '—', { color: colors.muted, minWidth: '58px' }),
-        stat(String(e.failed), { color: e.failed > 0 ? colors.danger : colors.muted, minWidth: '34px' }),
-        stat(`${Math.round(e.successRate * 100)}%`, { color: rateColor(e.successRate), fontWeight: 600, minWidth: '42px' }),
+      // ① 身份 + 两个头条数字（调用数、成功率）。数值列用固定宽度右对齐，
+      //    这样八张卡片的数字排在同一条竖线上。
+      React.createElement('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', whiteSpace: 'nowrap' } },
+        React.createElement('span', { style: { width: '10px', flex: 'none', color: colors.muted, fontSize: '9px' } }, isOpen ? '▾' : '▸'),
+        React.createElement('b', {
+          title: leading,
+          style: { flex: '1 1 auto', minWidth: 0, fontSize: '13.5px', fontWeight: 650, color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis' },
+        }, leading),
+        badge,
+        stat(String(e.calls), { flex: 'none', width: '54px', color: colors.text }),
+        stat(`${Math.round(e.successRate * 100)}%`, { flex: 'none', width: '44px', color: rateColor(e.successRate), fontWeight: 600 }),
       ),
+      // ② 次要指标压成一行小灰字，不再各自占一格抢横向空间
+      React.createElement('div', {
+        title: `${t('usageKpiTokens')} ${e.tokenReported > 0 ? (formatTokens(e.tokens) || '—') : '—'} · ${t('usageKpiDuration')} ${formatDuration(e.durationMs) || '—'} · ${e.failed} ${t('usageColFailures')}`,
+        style: { ...mono, marginTop: '5px', paddingLeft: '20px', fontSize: '11px', color: colors.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+      }, [
+        e.tokenReported > 0 ? (formatTokens(e.tokens) || '—') : '—',
+        formatDuration(e.durationMs) || '—',
+        `${e.failed} ${t('usageColFailures')}`,
+      ].join('  ·  ')),
+      // ③ 占比条放到整幅宽度上，读作「占本层流量多少」；颜色即成功率。
+      //    原先它是 84px 挤在数字中间，既不显眼也和数字抢位置。
+      React.createElement('div', {
+        style: { height: '4px', marginTop: '9px', marginLeft: '20px', background: colors.panel2, borderRadius: '2px', overflow: 'hidden' },
+      }, React.createElement('div', {
+        style: { height: '100%', width: `${Math.max(2, Math.round((e.calls / max) * 100))}%`, background: rateColor(e.successRate), borderRadius: '2px' },
+      })),
       isOpen
         ? React.createElement('div', {
-          style: { display: 'flex', gap: '22px', flexWrap: 'wrap', padding: '10px 14px 2px 25px', fontSize: '11.5px', color: colors.muted },
+          style: { display: 'flex', gap: '18px', flexWrap: 'wrap', padding: '10px 14px 2px 20px', marginTop: '9px', borderTop: `1px dashed ${colors.border}`, fontSize: '11.5px', color: colors.muted },
         },
         React.createElement('span', null, `${t('usageColAvgDuration')} `,
           React.createElement('b', { style: { ...mono, color: colors.text, fontWeight: 500 } }, formatDuration(e.avgDurationMs) || '—')),
@@ -3687,7 +3696,7 @@ window.__ModuleLoader__.load({
                   max: l1Max,
                   leading: e.provider,
                   badge: React.createElement('span', {
-                    style: { fontSize: '10.5px', padding: '1px 8px', borderRadius: '999px', background: colors.panel2, color: colors.muted, whiteSpace: 'nowrap' },
+                    style: { flex: 'none', fontSize: '10.5px', padding: '1px 8px', borderRadius: '999px', background: colors.panel2, color: colors.muted, whiteSpace: 'nowrap' },
                   }, `${e.models.length} ${t('usageModelCountLabel')}`),
                   isOpen: false,
                   onOpen: () => { setProvider(e.provider); setExpanded(new Set()); setQuery(''); },
