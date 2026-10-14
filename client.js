@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.8';
+    const VERSION = '0.6.0-alpha.9';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -194,6 +194,9 @@ window.__ModuleLoader__.load({
         // 也不受「排序恰好同序时看不出按钮有没有生效」的影响。
         usagePickProvider: '选择厂商…',
         usagePickModel: '展开模型…',
+        usagePagePrev: '上一页',
+        usagePageNext: '下一页',
+        usagePageRange: '显示',
         providers: '全部来源',
         noResults: '没有匹配的模型',
         retry: '重试',
@@ -342,6 +345,9 @@ window.__ModuleLoader__.load({
         usageHourCalls: '{count} calls',
         usagePickProvider: 'Pick a provider…',
         usagePickModel: 'Expand a model…',
+        usagePagePrev: 'prev',
+        usagePageNext: 'next',
+        usagePageRange: 'showing',
         providers: 'All providers',
         noResults: 'No matching models',
         retry: 'Retry',
@@ -3424,6 +3430,10 @@ window.__ModuleLoader__.load({
       return sum;
     }
 
+    // 明细/时间线每页条数。一屏 25 行 ≈ 刚好填满设置页可视高度，
+    // 再多就要靠滚动找东西，分页本身就失去意义了。
+    const USAGE_PAGE_SIZE = 25;
+
     const UsageDetailPage = memo(function UsageDetailPage({ rpc, onClose }) {
       const t = translate;
       const [snapshot, setSnapshot] = useState(null);
@@ -3448,6 +3458,11 @@ window.__ModuleLoader__.load({
       const [failFilter, setFailFilter] = useState('all');
       const [statusFilter, setStatusFilter] = useState('all');
       const [expanded, setExpanded] = useState(() => new Set());
+      // 明细与时间线各自分页：两者都是同一个 providerRows 子集的逐行视图，
+      // 一个厂商能有几百条，全量渲染会把页面拉得看不到底。
+      // 放在最后声明，避免打乱前面 useState 的槽位序号（测试按序号驱动状态）。
+      const [detailPage, setDetailPage] = useState(0);
+      const [timelinePage, setTimelinePage] = useState(0);
 
       useEffect(() => {
         const active = channel;
@@ -3630,7 +3645,9 @@ window.__ModuleLoader__.load({
 
       const searchBox = placeholder => React.createElement('input', {
         type: 'search', value: rowQuery, placeholder, 'aria-label': placeholder,
-        onChange: (event) => setRowQuery(event?.target?.value ?? ''),
+        // 换搜索词时把两个分页都退回第一页：停在第 12 页再筛一次，
+        // 看到的就是「明明有数据却一片空白」。
+        onChange: (event) => { setRowQuery(event?.target?.value ?? ''); setDetailPage(0); setTimelinePage(0); },
         style: {
           flex: '1 1 150px', minWidth: '130px', maxWidth: '230px', padding: '5px 10px', fontSize: '12px',
           background: colors.panel ?? '#1a1a1c', color: colors.text,
@@ -3658,6 +3675,36 @@ window.__ModuleLoader__.load({
       );
       const pickLabel = (name, e) => `${name} — ${e.calls} ${t('usageColCount')} · ${Math.round(e.successRate * 100)}%`;
 
+      // 分页窗口。页码在渲染期夹住而不是等 effect 去修：筛选条件一变
+      // （655 条筛到 3 条），停在第 12 页的旧页码会先渲染出一屏空白。
+      const windowOf = (list, page) => {
+        const pages = Math.max(1, Math.ceil(list.length / USAGE_PAGE_SIZE));
+        const safe = Math.min(Math.max(0, page), pages - 1);
+        return {
+          rows: list.slice(safe * USAGE_PAGE_SIZE, safe * USAGE_PAGE_SIZE + USAGE_PAGE_SIZE),
+          page: safe, pages,
+          from: list.length ? safe * USAGE_PAGE_SIZE + 1 : 0,
+          to: Math.min(list.length, (safe + 1) * USAGE_PAGE_SIZE),
+        };
+      };
+      const pageBtn = (off) => ({
+        padding: '4px 12px', borderRadius: '999px', fontSize: '11.5px', whiteSpace: 'nowrap',
+        fontFamily: 'inherit', cursor: off ? 'default' : 'pointer',
+        border: `1px solid ${off ? colors.border : colors.accent}`,
+        background: 'transparent', color: off ? colors.muted : colors.accent,
+        opacity: off ? 0.45 : 1,
+      });
+      const pager = (win, label, setPage) => win.pages <= 1
+        ? null
+        : React.createElement('div', {
+          style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', paddingTop: '8px', fontSize: '11.5px', color: colors.muted },
+        },
+        React.createElement('button', { type: 'button', disabled: win.page <= 0, onClick: () => setPage(win.page - 1), style: pageBtn(win.page <= 0) }, `‹ ${t('usagePagePrev')}`),
+        React.createElement('span', { style: { ...mono } }, `${win.page + 1} / ${win.pages}`),
+        React.createElement('button', { type: 'button', disabled: win.page >= win.pages - 1, onClick: () => setPage(win.page + 1), style: pageBtn(win.page >= win.pages - 1) }, `${t('usagePageNext')} ›`),
+        React.createElement('span', { style: { ...mono, opacity: 0.75 } }, `${t('usagePageRange')} ${win.from}–${win.to} / ${label}`),
+        );
+
       const toggleExpanded = key => setExpanded((prev) => {
         const next = new Set(prev);
         if (next.has(key)) next.delete(key); else next.add(key);
@@ -3669,7 +3716,7 @@ window.__ModuleLoader__.load({
         const head = React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
           React.createElement('button', {
             type: 'button',
-            onClick: () => { setProvider(null); setExpanded(new Set()); setRowQuery(''); },
+            onClick: () => { setProvider(null); setExpanded(new Set()); setRowQuery(''); setDetailPage(0); setTimelinePage(0); },
             style: { border: `1px solid ${colors.border}`, background: 'transparent', color: colors.accent, cursor: 'pointer', fontSize: '12px', padding: '4px 11px', borderRadius: '999px', whiteSpace: 'nowrap' },
           }, t('usageBackToProviders')),
           React.createElement('span', { style: { fontSize: '15px', fontWeight: 700, color: colors.text } }, String(provider)),
@@ -3686,10 +3733,10 @@ window.__ModuleLoader__.load({
         if (loading) return React.createElement('div', { style: { ...wrap }, key: 'l2-loading' }, head, React.createElement('div', { style: { color: colors.muted, fontSize: '13px' } }, t('loading')));
         if (error) return React.createElement('div', { style: { ...wrap }, key: 'l2-error' }, head, React.createElement('div', { style: { color: colors.danger, fontSize: '12.5px' } }, error));
 
-        return React.createElement('div', { style: wrap, key: 'l2' },
-          head,
-
-          // ① 该厂商下的模型
+        // 每段抽成具名构件、返回数组。段的先后顺序会被反复调整（这次就要把分时
+        // 移到明细上面），内联成一串兄弟节点时挪一段就得整块剪切，极易挪坏。
+        // 现在改顺序只动下面那个 SECTIONS 数组。
+        const modelsSection = () => [
           sectionTitle(t('usageL2Models'), t('usageL1Hint')),
           toolbar(sortChips(),
             React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
@@ -3707,72 +3754,11 @@ window.__ModuleLoader__.load({
               isOpen: expanded.has(e.key),
               onOpen: () => toggleExpanded(e.key),
             }))),
+        ];
 
-          // ② 请求明细（限定该厂商）
-          React.createElement('div', { style: { height: '4px' } }),
-          sectionTitle(t('usageL2Rows'), `${detailRows.length} ${t('usageKpiRequests')}`),
-          toolbar(
-            React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 'none' } },
-              [['all', t('usageFilterAll')], ['ok', t('usageFilterOk')], ['failed', t('usageFilterFailed')]]
-                .map(([id, label]) => chip(id, label, statusFilter === id, setStatusFilter))),
-            searchBox(t('usageSearchModel'))),
-          detailRows.length === 0
-            ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px', padding: '10px 0' } }, t('usageNoMatch'))
-            : table(
-              [th(t('usageColTime')), th(t('usageColModel')), th(t('usageColTokens'), 'right'),
-                th(t('usageColDuration'), 'right'), th(t('usageColFirstChunk'), 'right'), th(t('usageColStatus')), th(t('usageColSession'))],
-              detailRows.map((row, index) => {
-                const hasTokens = row.usageReported === true;
-                return React.createElement('tr', { key: `${row.requestId ?? index}` },
-                  td(new Date(row.startedAt).toLocaleTimeString(), { title: new Date(row.startedAt).toLocaleString(), ...mono }),
-                  td(String(row.model), { color: colors.text }),
-                  td(hasTokens ? (formatTokens(totalTokensOf(row)) || '0') : '—', {
-                    textAlign: 'right', ...mono,
-                    title: hasTokens
-                      ? `in ${row.inputTokens ?? 0} / out ${row.outputTokens ?? 0} / cache ${row.cacheReadTokens ?? 0}`
-                      : t('usageTokensUnavailable'),
-                  }),
-                  td(formatDuration(row.durationMs) || '—', { textAlign: 'right', ...mono }),
-                  td(row.firstChunkMs !== undefined && row.firstChunkMs !== null ? `${(row.firstChunkMs / 1000).toFixed(1)}s` : '—', { textAlign: 'right', ...mono }),
-                  td(row.ok ? t('usageOk') : (row.error?.code ?? t('usageFailed')),
-                    { color: row.ok ? colors.ok : colors.danger, maxWidth: 'none', ...mono },
-                    row.ok ? t('usageOk') : String(row.error?.code ?? t('usageFailed'))),
-                  td(row.sessionId ? String(row.sessionId).slice(0, 8) : '—', { textAlign: 'right', ...mono }, row.sessionId ?? undefined),
-                );
-              }),
-            ),
-
-          // ③ 时间线（限定该厂商）
-          React.createElement('div', { style: { height: '4px' } }),
-          sectionTitle(t('usageL2Timeline'), t('usageKpiDuration')),
-          React.createElement('div', {
-            style: { border: `1px solid ${colors.border}`, borderRadius: '10px', overflow: 'hidden' },
-          },
-          detailRows.map((r, i) => React.createElement('div', {
-            key: `${r.requestId ?? i}`,
-            style: { display: 'flex', gap: '10px', padding: '8px 12px', borderBottom: `1px solid ${colors.border}` },
-          },
-            React.createElement('span', { style: { width: '64px', textAlign: 'right', color: colors.muted, fontSize: '11px', ...mono } },
-              new Date(r.startedAt).toLocaleTimeString()),
-            React.createElement('span', {
-              title: r.ok ? t('usageOk') : (r.error?.code ?? t('usageFailed')),
-              style: { width: '7px', height: '7px', borderRadius: '50%', marginTop: '5px', flex: 'none', background: r.ok ? colors.ok : colors.danger },
-            }),
-            React.createElement('div', { style: { flex: 1, minWidth: 0 } },
-              React.createElement('div', { style: { fontSize: '12.5px', color: colors.text } }, String(r.model)),
-              React.createElement('div', { style: { fontSize: '11px', color: colors.muted, ...mono } },
-                [
-                  r.usageReported === true ? formatTokens(totalTokensOf(r)) : '—',
-                  formatDuration(r.durationMs) || '—',
-                  r.firstChunkMs !== undefined ? `${t('usageColFirstChunk')} ${(r.firstChunkMs / 1000).toFixed(1)}s` : null,
-                  r.ok ? null : (r.error?.code ?? t('usageFailed')),
-                ].filter(Boolean).join(' · '))),
-          ))),
-
-          // ④ 分时。做这一版的直接动因：真实账本里深夜成功率只有白天的三分之一
-          //    （01:00 26% / 22:00 37% vs 08:00 98% / 18:00 94%），
-          //    部分网关按时段限流或计价，不看钟点就会在错的时段硬撞。
-          React.createElement('div', { style: { height: '4px' } }),
+        // 分时。做这一版的直接动因：真实账本里同一厂商的成功率随时段剧烈波动，
+        // 部分网关按时段限流或计价，不看钟点就会在错的时段硬撞。
+        const hoursSection = () => [
           sectionTitle(t('usageL2Hours'), hourRange
             ? [
               `${t('usageBestHour')} ${String(hourRange.best.hour).padStart(2, '0')}:00 ${Math.round(hourRange.best.successRate * 100)}%`,
@@ -3792,7 +3778,7 @@ window.__ModuleLoader__.load({
             },
             React.createElement('div', {
               // 柱高＝该时段调用数（按本层最大时段归一）；失败堆在上面，
-              // 于是「红帽子」越厚就是那个时段越糟，形状本身即结论。
+              // 「红帽子」越厚就是那个时段越糟，形状本身即结论。
               style: { height: '52px', width: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' },
             },
               React.createElement('div', {
@@ -3811,7 +3797,83 @@ window.__ModuleLoader__.load({
             }, String(b.hour)),
             );
           })),
-        );
+        ];
+
+        // 明细（分页）
+        const detailWin = windowOf(detailRows, detailPage);
+        const rowsSection = () => [
+          sectionTitle(t('usageL2Rows'), `${detailRows.length} ${t('usageKpiRequests')}`),
+          toolbar(
+            React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 'none' } },
+              [['all', t('usageFilterAll')], ['ok', t('usageFilterOk')], ['failed', t('usageFilterFailed')]]
+                .map(([id, label]) => chip(id, label, statusFilter === id, (v) => {
+                  setStatusFilter(v); setDetailPage(0); setTimelinePage(0);
+                }))),
+            searchBox(t('usageSearchModel'))),
+          detailWin.rows.length === 0
+            ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px', padding: '10px 0' } }, t('usageNoMatch'))
+            : table(
+              [th(t('usageColTime')), th(t('usageColModel')), th(t('usageColTokens'), 'right'),
+                th(t('usageColDuration'), 'right'), th(t('usageColFirstChunk'), 'right'), th(t('usageColStatus')), th(t('usageColSession'))],
+              detailWin.rows.map((row, index) => {
+                const hasTokens = row.usageReported === true;
+                return React.createElement('tr', { key: `${row.requestId ?? index}` },
+                  td(new Date(row.startedAt).toLocaleTimeString(), { title: new Date(row.startedAt).toLocaleString(), ...mono }),
+                  td(String(row.model), { color: colors.text }),
+                  td(hasTokens ? (formatTokens(totalTokensOf(row)) || '0') : '—', {
+                    textAlign: 'right', ...mono,
+                    title: hasTokens
+                      ? `in ${row.inputTokens ?? 0} / out ${row.outputTokens ?? 0} / cache ${row.cacheReadTokens ?? 0}`
+                      : t('usageTokensUnavailable'),
+                  }),
+                  td(formatDuration(row.durationMs) || '—', { textAlign: 'right', ...mono }),
+                  td(row.firstChunkMs !== undefined && row.firstChunkMs !== null ? `${(row.firstChunkMs / 1000).toFixed(1)}s` : '—', { textAlign: 'right', ...mono }),
+                  td(row.ok ? t('usageOk') : (row.error?.code ?? t('usageFailed')),
+                    { color: row.ok ? colors.ok : colors.danger, maxWidth: 'none', ...mono },
+                    row.ok ? t('usageOk') : String(row.error?.code ?? t('usageFailed'))),
+                  td(row.sessionId ? String(row.sessionId).slice(0, 8) : '—', { textAlign: 'right', ...mono }, row.sessionId ?? undefined),
+                );
+              }),
+            ),
+          pager(detailWin, `${detailRows.length}`, setDetailPage),
+        ];
+
+        // 时间线（分页，独立页码：它和明细是同一批行的两种看法，
+        // 共用一个页码会让人以为翻明细把时间线也翻了）
+        const timelineWin = windowOf(detailRows, timelinePage);
+        const timelineSection = () => [
+          sectionTitle(t('usageL2Timeline'), `${detailRows.length} ${t('usageKpiRequests')}`),
+          React.createElement('div', {
+            style: { border: `1px solid ${colors.border}`, borderRadius: '10px', overflow: 'hidden' },
+          },
+          timelineWin.rows.map((r, i) => React.createElement('div', {
+            key: `${r.requestId ?? i}`,
+            style: { display: 'flex', gap: '10px', padding: '8px 12px', borderBottom: `1px solid ${colors.border}` },
+          },
+            React.createElement('span', { style: { width: '64px', textAlign: 'right', color: colors.muted, fontSize: '11px', ...mono } },
+              new Date(r.startedAt).toLocaleTimeString()),
+            React.createElement('span', {
+              title: r.ok ? t('usageOk') : (r.error?.code ?? t('usageFailed')),
+              style: { width: '7px', height: '7px', borderRadius: '50%', marginTop: '5px', flex: 'none', background: r.ok ? colors.ok : colors.danger },
+            }),
+            React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+              React.createElement('div', { style: { fontSize: '12.5px', color: colors.text } }, String(r.model)),
+              React.createElement('div', { style: { fontSize: '11px', color: colors.muted, ...mono } },
+                [
+                  r.usageReported === true ? (formatTokens(totalTokensOf(r)) || '0') : '—',
+                  formatDuration(r.durationMs) || '—',
+                  r.firstChunkMs !== undefined ? `${t('usageColFirstChunk')} ${(r.firstChunkMs / 1000).toFixed(1)}s` : null,
+                  r.ok ? null : (r.error?.code ?? t('usageFailed')),
+                ].filter(Boolean).join(' · '))),
+          ))),
+          pager(timelineWin, `${detailRows.length}`, setTimelinePage),
+        ];
+
+        // 顺序：概览（模型、分时）在前，逐行（明细、时间线）在后。
+        const SECTIONS = [modelsSection, hoursSection, rowsSection, timelineSection];
+        const spacer = () => React.createElement('div', { style: { height: '4px' } });
+        return React.createElement('div', { style: wrap, key: 'l2' }, head,
+          ...SECTIONS.flatMap((fn, i) => (i === 0 ? fn() : [spacer(), ...fn()])));
       };
 
       // ── 第一层内容 ──────────────────────────────────────────
@@ -3842,7 +3904,7 @@ window.__ModuleLoader__.load({
                   React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
                     picker(t('usagePickProvider'),
                       l1.map(e => ({ value: e.provider, label: pickLabel(e.provider, e) })),
-                      (v) => { setProvider(v); setExpanded(new Set()); setRowQuery(''); }))),
+                      (v) => { setProvider(v); setExpanded(new Set()); setRowQuery(''); setDetailPage(0); setTimelinePage(0); }))),
                 listShell(l1.map(e => cardRow(e, {
                   max: l1Max,
                   leading: e.provider,
@@ -3850,7 +3912,7 @@ window.__ModuleLoader__.load({
                     style: { flex: 'none', fontSize: '10.5px', padding: '1px 8px', borderRadius: '999px', background: colors.panel2, color: colors.muted, whiteSpace: 'nowrap' },
                   }, `${e.models.length} ${t('usageModelCountLabel')}`),
                   isOpen: false,
-                  onOpen: () => { setProvider(e.provider); setExpanded(new Set()); setRowQuery(''); },
+                  onOpen: () => { setProvider(e.provider); setExpanded(new Set()); setRowQuery(''); setDetailPage(0); setTimelinePage(0); },
                 })))),
       );
     });

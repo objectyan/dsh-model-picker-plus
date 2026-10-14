@@ -1459,6 +1459,48 @@ console.log('\n== 用量展示与排序 ==');
     check('明细行有独立搜索框', !!rowBox);
     const modelSelect = walk(l2Tree, n => n.type === 'select');
     check('第二层有模型下拉', modelSelect.length === 1, `selects=${modelSelect.length}`);
+
+    // ── 分页 + 段落顺序（用户要求：分时段挪到明细上面；明细太长要分页）──
+    const manyRows = Array.from({ length: 60 }, (_, i) => ({
+      provider: 'alpha', model: i % 2 ? 'm1' : 'm3', ok: i % 3 !== 0,
+      durationMs: 1000 + i, usageReported: true, inputTokens: 10, outputTokens: 5,
+      startedAt: t0 + i * 1000, timezoneOffsetMinutes: -480, requestId: `x${i}`,
+      ...(i % 3 !== 0 ? {} : { error: { code: 'RATE_LIMIT' } }),
+    }));
+    const bigSnap = { schemaVersion: 2, status: { recordCount: 60 }, recent: manyRows };
+    const bigTree = modules.react.__withState(
+      new Map([[0, bigSnap], [2, false], [3, 'alpha']]),
+      () => UsageDetailPage({ rpc: null, onClose: undefined }));
+    const trs = walk(bigTree, n => n.type === 'tr');
+    // 表头那一行不算数据行
+    check('明细只渲染一页', trs.length - 1 === 25, `rows=${trs.length - 1}`);
+    const bigJson = JSON.stringify(bigTree);
+    check('分页控件出现并显示页码', /1 \/ 3/.test(bigJson), `60 条 / 每页 25 → 3 页`);
+    const pageBtns = walk(bigTree, n => n.type === 'button' && typeof n.props?.disabled === 'boolean');
+    check('分页按钮带 disabled', pageBtns.length >= 2 && pageBtns.some(b => b.props.disabled === true));
+
+    // 段落顺序：分时必须在明细之前
+    const atHours = bigJson.indexOf('usageL2Hours');
+    const atRows = bigJson.indexOf('usageL2Rows');
+    const atModels = bigJson.indexOf('usageL2Models');
+    const atTimeline = bigJson.indexOf('usageL2Timeline');
+    check('第二层顺序为 模型 → 分时 → 明细 → 时间线',
+      atModels > -1 && atModels < atHours && atHours < atRows && atRows < atTimeline,
+      `models=${atModels} hours=${atHours} rows=${atRows} timeline=${atTimeline}`);
+
+    // 点「下一页」必须真的改页码状态（槽位 9=明细、10=时间线）
+    modules.react.setterCalls.length = 0;
+    const nextBtn = pageBtns.find(b => String(b.children).includes('usagePageNext'));
+    check('找到下一页按钮', !!nextBtn);
+    nextBtn?.props.onClick?.();
+    check('下一页改明细页码', modules.react.setterCalls.some(s => s.index === 9 && s.next === 1),
+      JSON.stringify(modules.react.setterCalls.map(s => `${s.index}:${s.next}`)));
+
+    // 少于一页时不该出现分页控件（60 条分 3 页；25 条以内应无按钮）
+    const smallTree = modules.react.__withState(
+      new Map([[0, { ...bigSnap, recent: manyRows.slice(0, 10) }], [2, false], [3, 'alpha']]),
+      () => UsageDetailPage({ rpc: null, onClose: undefined }));
+    check('不足一页时不显示分页', walk(smallTree, n => n.type === 'button' && typeof n.props?.disabled === 'boolean').length === 0);
     check('warn 色有主题 token 与兜底值', /warn:\s*'var\(--dsw-alias-state-warning-primary,\s*#d9a441\)'/
       .test(src));
 

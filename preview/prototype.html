@@ -44,6 +44,10 @@
      用原生 select —— 自定义弹层要面对设置页的 overflow 裁剪风险。 */
   .pick{flex:1 1 180px;min-width:150px;max-width:300px;padding:6px 10px;font-size:12px;background:var(--panel2);
         color:var(--tx);border:1px solid var(--line);border-radius:7px;font-family:inherit;cursor:pointer}
+  .pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:8px;font-size:11.5px;color:var(--mut)}
+  .pager button{padding:4px 12px;border-radius:999px;font-size:11.5px;white-space:nowrap;font-family:inherit;
+                cursor:pointer;border:1px solid var(--acc);background:transparent;color:var(--acc)}
+  .pager button[disabled]{border-color:var(--line);color:var(--mut);opacity:.45;cursor:default}
   .count{margin-left:auto;color:var(--dim);font-size:11.5px;font-family:ui-monospace,Consolas,monospace;white-space:nowrap}
 
   .rows{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel)}
@@ -259,49 +263,6 @@
   </div>
 
   <div class="sec">
-    <div class="sech"><h2>请求明细</h2><span>限定 opencode2dsh</span></div>
-    <div class="bar">
-      <div class="grp"><span class="chip on">全部</span><span class="chip">成功</span><span class="chip">失败</span></div>
-      <input class="search" placeholder="搜索模型 / 错误码">
-      <span class="count">655 总请求数</span>
-    </div>
-    <div class="tw">
-      <table>
-        <thead><tr>
-          <th style="width:84px">时间</th><th>模型</th>
-          <th class="r" style="width:92px">token</th><th class="r" style="width:80px">耗时</th>
-          <th class="r" style="width:76px">首字</th><th style="width:130px">状态</th><th class="r" style="width:72px">会话</th>
-        </tr></thead>
-        <tbody>
-          <tr><td class="mono mut">09:26:14</td><td style="color:var(--tx)">step-5-preview-free</td><td class="r mono dim">—</td><td class="r mono mut">8.7s</td><td class="r mono dim">—</td><td class="mono bad">RATE_LIMIT</td><td class="r mono" style="color:var(--acc)">a3f1c902</td></tr>
-          <tr><td class="mono mut">09:25:31</td><td style="color:var(--tx)">step-5-preview-free</td><td class="r mono dim">—</td><td class="r mono mut">10.0s</td><td class="r mono dim">—</td><td class="mono bad">RATE_LIMIT</td><td class="r mono" style="color:var(--acc)">a3f1c902</td></tr>
-          <tr><td class="mono mut">09:24:02</td><td style="color:var(--tx)">space-bunny-free</td><td class="r mono">170.9K</td><td class="r mono mut">8.0s</td><td class="r mono mut">0.9s</td><td class="ok">成功</td><td class="r mono" style="color:var(--acc)">7c02be14</td></tr>
-          <tr><td class="mono mut">09:22:47</td><td style="color:var(--tx)">step-5-preview-free</td><td class="r mono dim">—</td><td class="r mono mut">9.6s</td><td class="r mono dim">—</td><td class="mono bad">RATE_LIMIT</td><td class="r mono" style="color:var(--acc)">a3f1c902</td></tr>
-          <tr><td class="mono mut">09:19:10</td><td style="color:var(--tx)">muse-spark-1.3-contributor-free</td><td class="r mono dim">—</td><td class="r mono mut">20.1s</td><td class="r mono dim">—</td><td class="mono bad">PI_AI_ERROR</td><td class="r mono" style="color:var(--acc)">e5b90d31</td></tr>
-          <tr><td class="mono mut">09:15:38</td><td style="color:var(--tx)">space-bunny-free</td><td class="r mono">166.4K</td><td class="r mono mut">14.0s</td><td class="r mono mut">1.1s</td><td class="ok">成功</td><td class="r mono" style="color:var(--acc)">7c02be14</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="sec">
-    <div class="sech"><h2>时间线</h2><span>累计耗时</span></div>
-    <div class="tw">
-      <div class="ev"><span class="t mono mut">09:26:14</span><span class="d" style="background:var(--bad)"></span>
-        <div class="c"><div class="n">step-5-preview-free</div>
-          <div class="x"><span class="bad">RATE_LIMIT</span> · 8.7s</div></div></div>
-      <div class="ev"><span class="t mono mut">09:25:31</span><span class="d" style="background:var(--bad)"></span>
-        <div class="c"><div class="n">step-5-preview-free</div>
-          <div class="x"><span class="bad">RATE_LIMIT</span> · 10.0s</div></div></div>
-      <div class="ev"><span class="t mono mut">09:24:02</span><span class="d" style="background:var(--ok)"></span>
-        <div class="c"><div class="n">space-bunny-free</div>
-          <div class="x">170.9K · 8.0s · 首字 0.9s</div></div></div>
-      <div class="ev"><span class="t mono mut">09:19:10</span><span class="d" style="background:var(--bad)"></span>
-        <div class="c"><div class="n">muse-spark-1.3-contributor-free</div>
-          <div class="x"><span class="bad">PI_AI_ERROR</span> · 20.1s</div></div></div>
-    </div>
-  </div>
-  <div class="sec">
     <div class="sech"><h2>分时</h2><span>最好时段 10:00 90%  ·  最差时段 11:00 0%</span></div>
     <div class="bar" style="margin:0 0 6px">
       <span class="count" style="margin-left:0">按请求发生时的本地钟点 · 柱高＝调用数 · 绿＝成功 红＝失败</span>
@@ -334,6 +295,50 @@
     </div>
   </div>
 
+  <div class="sec">
+    <div class="sech"><h2>请求明细</h2><span>限定 opencode2dsh</span></div>
+    <div class="bar">
+      <div class="grp"><span class="chip on">全部</span><span class="chip">成功</span><span class="chip">失败</span></div>
+      <input class="search" placeholder="搜索模型 / 错误码">
+      <span class="count">655 总请求数</span>
+    </div>
+    <div class="tw">
+      <table>
+        <thead><tr>
+          <th style="width:84px">时间</th><th>模型</th>
+          <th class="r" style="width:92px">token</th><th class="r" style="width:80px">耗时</th>
+          <th class="r" style="width:76px">首字</th><th style="width:130px">状态</th><th class="r" style="width:72px">会话</th>
+        </tr></thead>
+        <tbody>
+          <tr><td class="mono mut">09:26:14</td><td style="color:var(--tx)">step-5-preview-free</td><td class="r mono dim">—</td><td class="r mono mut">8.7s</td><td class="r mono dim">—</td><td class="mono bad">RATE_LIMIT</td><td class="r mono" style="color:var(--acc)">a3f1c902</td></tr>
+          <tr><td class="mono mut">09:25:31</td><td style="color:var(--tx)">step-5-preview-free</td><td class="r mono dim">—</td><td class="r mono mut">10.0s</td><td class="r mono dim">—</td><td class="mono bad">RATE_LIMIT</td><td class="r mono" style="color:var(--acc)">a3f1c902</td></tr>
+          <tr><td class="mono mut">09:24:02</td><td style="color:var(--tx)">space-bunny-free</td><td class="r mono">170.9K</td><td class="r mono mut">8.0s</td><td class="r mono mut">0.9s</td><td class="ok">成功</td><td class="r mono" style="color:var(--acc)">7c02be14</td></tr>
+          <tr><td class="mono mut">09:22:47</td><td style="color:var(--tx)">step-5-preview-free</td><td class="r mono dim">—</td><td class="r mono mut">9.6s</td><td class="r mono dim">—</td><td class="mono bad">RATE_LIMIT</td><td class="r mono" style="color:var(--acc)">a3f1c902</td></tr>
+          <tr><td class="mono mut">09:19:10</td><td style="color:var(--tx)">muse-spark-1.3-contributor-free</td><td class="r mono dim">—</td><td class="r mono mut">20.1s</td><td class="r mono dim">—</td><td class="mono bad">PI_AI_ERROR</td><td class="r mono" style="color:var(--acc)">e5b90d31</td></tr>
+          <tr><td class="mono mut">09:15:38</td><td style="color:var(--tx)">space-bunny-free</td><td class="r mono">166.4K</td><td class="r mono mut">14.0s</td><td class="r mono mut">1.1s</td><td class="ok">成功</td><td class="r mono" style="color:var(--acc)">7c02be14</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pager"><button disabled>‹ 上一页</button><span>1 / 27</span><button>下一页 ›</button><span style="opacity:.75">显示 1–25 / 655</span></div>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><h2>时间线</h2><span>累计耗时</span></div>
+    <div class="tw">
+      <div class="ev"><span class="t mono mut">09:26:14</span><span class="d" style="background:var(--bad)"></span>
+        <div class="c"><div class="n">step-5-preview-free</div>
+          <div class="x"><span class="bad">RATE_LIMIT</span> · 8.7s</div></div></div>
+      <div class="ev"><span class="t mono mut">09:25:31</span><span class="d" style="background:var(--bad)"></span>
+        <div class="c"><div class="n">step-5-preview-free</div>
+          <div class="x"><span class="bad">RATE_LIMIT</span> · 10.0s</div></div></div>
+      <div class="ev"><span class="t mono mut">09:24:02</span><span class="d" style="background:var(--ok)"></span>
+        <div class="c"><div class="n">space-bunny-free</div>
+          <div class="x">170.9K · 8.0s · 首字 0.9s</div></div></div>
+      <div class="ev"><span class="t mono mut">09:19:10</span><span class="d" style="background:var(--bad)"></span>
+        <div class="c"><div class="n">muse-spark-1.3-contributor-free</div>
+          <div class="x"><span class="bad">PI_AI_ERROR</span> · 20.1s</div></div></div>
+    </div>
+  </div>
 </div>
 
 </body>
