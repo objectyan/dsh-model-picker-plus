@@ -1614,6 +1614,28 @@ console.log('\n== 用量展示与排序 ==');
     // 收藏星与「使用」必须 stopPropagation，否则整行可点会连带触发它们。
     check('推荐行的收藏星 stopPropagation', /onClick: \(event\) => \{ event\.stopPropagation\(\); toggleFavorite/.test(recRegion));
     check('推荐行的「使用」按钮 stopPropagation', /'data-model-option': 'true',\s*\n\s*onClick: \(event\) => \{ event\.stopPropagation\(\)/.test(recRegion));
+
+    // 用量徽章：推荐页此前独独没接 usage，同一个模型在别的视图能看到
+    // 「用过几次、成了几次」，切到推荐页就消失了。
+    const withUsage = RecommendationRow({
+      row, current: null, favoriteSet: new Set(),
+      toggleFavorite: () => {}, choose: () => {}, busy: false, task: 'code',
+      usage: { calls: 12, okCalls: 10, failedCalls: 2, tokens: 34567, durationMs: 89000, tokensLabel: '34.6K', durationLabel: '1.5m' },
+      t,
+    });
+    check('推荐行渲染用量徽章', JSON.stringify(withUsage).includes('"data-usage"'));
+    check('推荐行没有用量时不渲染徽章', !JSON.stringify(node).includes('"data-usage"'));
+    // 徽章顺序与其它视图一致：能力胶囊 → 用量 → 收藏星
+    const pillRegion = src.slice(src.indexOf('RecommendationRow = memo'), src.indexOf('function ModelPickerPlus'));
+    const atCap = pillRegion.indexOf('CapPill, { key: badge.label');
+    const atUsage = pillRegion.indexOf('UsagePill, { badge: usage, t }');
+    const atStar = pillRegion.indexOf("}, favoriteSet.has(key) ? '★' : '☆'");
+    check('推荐行徽章顺序为 能力 → 用量 → 收藏',
+      atCap > -1 && atCap < atUsage && atUsage < atStar, `cap=${atCap} usage=${atUsage} star=${atStar}`);
+    // 调用点必须真的把 usage 传进去，否则组件接了参数也是空
+    const callSite = src.slice(src.indexOf('recommendationRows.map(row =>'));
+    check('推荐行调用点传入 usage', callSite.includes('usageBadge(usageIndex, row.group, row.model, t)'),
+      callSite.slice(0, 60));
   }
 
   // ── 用量快照走 Connection RPC（异步） ─────────────────────

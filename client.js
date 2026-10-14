@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.11';
+    const VERSION = '0.6.0-alpha.12';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -1692,7 +1692,7 @@ window.__ModuleLoader__.load({
       );
     });
 
-    const RecommendationRow = memo(function RecommendationRow({ row, current, favoriteSet, toggleFavorite, choose, busy, task, t }) {
+    const RecommendationRow = memo(function RecommendationRow({ row, current, favoriteSet, toggleFavorite, choose, busy, task, usage, t }) {
       const { group, model } = row;
       const key = modelKey(group.id, model.id);
       const selected = current?.provider === group.id && current?.model === model.id;
@@ -1749,6 +1749,10 @@ window.__ModuleLoader__.load({
         ),
         React.createElement('div', { style: { flex: 'none', display: 'flex', alignItems: 'center', gap: '5px' } },
           badges.map(badge => React.createElement(CapPill, { key: badge.label, cap: badge.cap, label: badge.label })),
+          // 与其它视图同一顺序：能做什么 → 用了多少 → 收藏。
+          // 此前推荐页独独没有用量徽章，用户在推荐页看不到「这个模型我用过几次、
+          // 成了几次」，只能切到全部/最近页去找同一条信息。
+          React.createElement(UsagePill, { badge: usage, t }),
           React.createElement('button', {
             type: 'button',
             title: favoriteSet.has(key) ? t('removeFavorite') : t('addFavorite'),
@@ -2621,7 +2625,20 @@ window.__ModuleLoader__.load({
               React.createElement('div', { style: { fontSize: '11px', color: colors.muted, padding: '3px 9px', borderLeft: '2px solid #f5a524', margin: '0 2px 8px' } }, recommendationReason(taskMode, t)),
               React.createElement('div', { style: { fontSize: '11px', fontWeight: 700, color: colors.muted, margin: '2px 0 6px' } }, t('recommended')),
               recommendationRows.length > 0
-                ? recommendationRows.map(row => React.createElement(RecommendationRow, { key: modelKey(row.group.id, row.model.id), row, current, favoriteSet, toggleFavorite, choose, busy, task: taskMode, t }))
+                ? recommendationRows.map(row => React.createElement(RecommendationRow, {
+                   key: modelKey(row.group.id, row.model.id),
+                   row,
+                   current,
+                   favoriteSet,
+                   toggleFavorite,
+                   choose,
+                   busy,
+                   task: taskMode,
+                   // 推荐页此前独独没有用量徽章：同一个模型在「最近/收藏/全部」
+                   // 能看到用过几次、成了几次，切到推荐页就没了，信息不一致。
+                   usage: usageBadge(usageIndex, row.group, row.model, t),
+                   t,
+                 }))
                 : React.createElement('div', { style: { padding: '18px 4px', color: colors.muted, fontSize: '12px' } }, t('noTaskResults')),
               React.createElement('button', { type: 'button', onClick: () => setViewMode('all'), style: { display: 'block', margin: '4px auto 10px', border: 'none', background: 'transparent', color: colors.accent, cursor: 'pointer', fontSize: '11px' } }, `${t('viewAll')} →`),
             ) : null,
