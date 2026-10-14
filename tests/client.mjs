@@ -1639,7 +1639,7 @@ console.log('\n== 用量展示与排序 ==');
       capRegion.includes('CapPill, { key:') && capRegion.includes('UsagePill, { badge: usage, t }'),
       `len=${capRegion.length}`);
     check('CapLine 纵向排列（能力与用量各占一行）',
-      /flexDirection: 'column'/.test(capRegion) && /alignItems: 'flex-start'/.test(capRegion));
+      /flexDirection: 'column'/.test(capRegion) && /alignItems: 'flex-end'/.test(capRegion));
     // 胶囊自己一行（可换行），用量是它的兄弟节点而不是同一行的第 N 个胶囊
     check('能力行独立可换行、用量另起一行',
       /alignItems: 'center', gap: '4px', flexWrap: 'wrap' \} \}, \.\.\.shown\)/.test(capRegion)
@@ -1664,6 +1664,9 @@ console.log('\n== 用量展示与排序 ==');
       check('能力行自己可换行', kids[0]?.props?.style?.flexWrap === 'wrap');
       check('CapLine 不抢名称的宽度（flex:none，作为行的右侧成员）',
         node?.props?.style?.flex === 'none', JSON.stringify(node?.props?.style?.flex));
+      // 用量比胶囊行短时，必须贴右边缘对齐而不是左边突出来一块。
+      check('两行按右边缘对齐', node?.props?.style?.alignItems === 'flex-end',
+        JSON.stringify(node?.props?.style?.alignItems));
 
       // 位置：必须是「行」的直接子节点、排在名称内容之后 —— 也就是右侧，
       // 而不是嵌在名称那个 div 里变成名称下方。

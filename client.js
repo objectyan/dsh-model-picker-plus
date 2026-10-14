@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.15';
+    const VERSION = '0.6.0-alpha.16';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -1580,10 +1580,11 @@ window.__ModuleLoader__.load({
       const shown = max ? pills.slice(0, max) : pills;
       if (shown.length === 0 && !usage) return null;
       // 能力胶囊一行、用量徽章一行（上下结构），整组作为行的右侧成员。
-      // 两者并排时会互相抢宽度，胶囊一多就把用量挤到行尾甚至截断；
-      // 纵向排开之后各自完整，左边缘也对齐。
+      // 两者并排时会互相抢宽度，胶囊一多就把用量挤到行尾甚至截断。
+      // alignItems 用 flex-end：整组贴着右侧操作区，两行的**右边缘**对齐，
+      // 用量短于胶囊行时也不会左边突出来一块。
       return React.createElement('span', {
-        style: { flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' },
+        style: { flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' },
       },
         shown.length
           ? React.createElement('span', { style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' } }, ...shown)
