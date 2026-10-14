@@ -163,6 +163,26 @@ window.__ModuleLoader__.load({
         usageAllSucceeded: '全部成功',
         usageNoMatch: '没有匹配的记录',
         usageMore: '条更多记录',
+        // 两级下钻：厂商 → 该厂商的模型
+        usageL1Title: '按厂商',
+        usageL1Hint: '点任意厂商下钻到其模型',
+        usageL2Models: '该厂商下的模型',
+        usageL2Rows: '请求明细',
+        usageL2Timeline: '时间线',
+        usageBackToProviders: '‹ 全部厂商',
+        usageModelCountLabel: '模型数',
+        usageTopErrors: '主要错误',
+        usageFirstUse: '首次使用',
+        usageLastUse: '最近使用',
+        usageSearchProvider: '搜索厂商',
+        usageSearchModel: '搜索模型',
+        usageSortCalls: '按调用',
+        usageSortTokens: '按 token',
+        usageSortDuration: '按耗时',
+        usageSortFailures: '按失败率',
+        usageFilterHasFailures: '有失败',
+        usageFilterAllOk: '全成功',
+        usageNoErrors: '无失败',
         providers: '全部来源',
         noResults: '没有匹配的模型',
         retry: '重试',
@@ -282,6 +302,26 @@ window.__ModuleLoader__.load({
         usageAllSucceeded: 'all ok',
         usageNoMatch: 'No matching records',
         usageMore: 'more records',
+        // Two-level drill-down: provider -> its models
+        usageL1Title: 'By provider',
+        usageL1Hint: 'Pick a provider to drill into its models',
+        usageL2Models: 'Models in this provider',
+        usageL2Rows: 'Request rows',
+        usageL2Timeline: 'Timeline',
+        usageBackToProviders: '‹ All providers',
+        usageModelCountLabel: 'models',
+        usageTopErrors: 'top errors',
+        usageFirstUse: 'first used',
+        usageLastUse: 'last used',
+        usageSearchProvider: 'Search provider',
+        usageSearchModel: 'Search model',
+        usageSortCalls: 'by calls',
+        usageSortTokens: 'by tokens',
+        usageSortDuration: 'by duration',
+        usageSortFailures: 'by failure rate',
+        usageFilterHasFailures: 'with failures',
+        usageFilterAllOk: 'all ok',
+        usageNoErrors: 'no failures',
         providers: 'All providers',
         noResults: 'No matching models',
         retry: 'Retry',
@@ -1270,6 +1310,9 @@ window.__ModuleLoader__.load({
       accentFg: 'var(--dsw-alias-label-primary-inverted, #fff)',
       danger: 'var(--dsw-alias-state-error-primary, #e05252)',
       ok: 'var(--dsw-alias-state-success-primary, #3fa95b)',
+      // 成功率中间档（60%~90%）用警示色。主题未提供该 token 时退到固定琥珀色 ——
+      // 三档色阶是本页的核心可读性手段，宁可有个兜底色也不要塌成 text。
+      warn: 'var(--dsw-alias-state-warning-primary, #d9a441)',
       hoverBg: 'var(--dsw-alias-interactive-bg-hover, rgba(255,255,255,.05))',
     };
     // 主题色的透明版本（color-mix 对 var() 同样有效）。
@@ -3242,19 +3285,62 @@ window.__ModuleLoader__.load({
         const key = `${r.provider}/${r.model}`;
         let entry = map.get(key);
         if (!entry) {
-          entry = { key, provider: r.provider, model: r.model, calls: 0, ok: 0, failed: 0, tokens: 0, tokenReported: 0, durationMs: 0 };
+          entry = { key, provider: r.provider, model: r.model, calls: 0, ok: 0, failed: 0, tokens: 0, tokenReported: 0, durationMs: 0, errs: new Map(), firstAt: null, lastAt: null };
           map.set(key, entry);
         }
         entry.calls += 1;
         if (r.ok) entry.ok += 1; else entry.failed += 1;
         entry.durationMs += Number.isSafeInteger(r.durationMs) ? r.durationMs : 0;
         if (r.usageReported === true) { entry.tokens += totalTokensOf(r); entry.tokenReported += 1; }
+        // 展开行要显示「主要错误」，所以逐码计数；失败行的 error.code 可能缺失。
+        if (!r.ok) { const code = r.error?.code ?? 'UNKNOWN'; entry.errs.set(code, (entry.errs.get(code) ?? 0) + 1); }
+        if (Number.isSafeInteger(r.startedAt)) {
+          if (entry.firstAt === null || r.startedAt < entry.firstAt) entry.firstAt = r.startedAt;
+          if (entry.lastAt === null || r.startedAt > entry.lastAt) entry.lastAt = r.startedAt;
+        }
       }
-      const list = [...map.values()];
+      return deriveSummary([...map.values()]);
+    }
+
+    // 第一层：按厂商聚合。用户明确决定 **不按供应商归并** ——
+    // qoder / dsh-provider-qoder、workbuddy / workbuddy-global 虽属同一供应商，
+    // 但它们是不同的接入通道，成功率差异本身是有用信号（workbuddy 100% vs
+    // workbuddy-global 93%），归并会把这个信号抹掉。
+    function summarizeUsageByProvider(records) {
+      const map = new Map();
+      for (const r of records ?? []) {
+        if (r === null || typeof r !== 'object') continue;
+        if (typeof r.provider !== 'string' || typeof r.model !== 'string') continue;
+        let entry = map.get(r.provider);
+        if (!entry) {
+          entry = { key: r.provider, provider: r.provider, calls: 0, ok: 0, failed: 0, tokens: 0, tokenReported: 0, durationMs: 0, errs: new Map(), firstAt: null, lastAt: null, models: [] };
+          map.set(r.provider, entry);
+        }
+        entry.calls += 1;
+        if (r.ok) entry.ok += 1; else entry.failed += 1;
+        entry.durationMs += Number.isSafeInteger(r.durationMs) ? r.durationMs : 0;
+        if (r.usageReported === true) { entry.tokens += totalTokensOf(r); entry.tokenReported += 1; }
+        if (!r.ok) { const code = r.error?.code ?? 'UNKNOWN'; entry.errs.set(code, (entry.errs.get(code) ?? 0) + 1); }
+        if (Number.isSafeInteger(r.startedAt)) {
+          if (entry.firstAt === null || r.startedAt < entry.firstAt) entry.firstAt = r.startedAt;
+          if (entry.lastAt === null || r.startedAt > entry.lastAt) entry.lastAt = r.startedAt;
+        }
+        entry.models.push(r);
+      }
+      const list = deriveSummary([...map.values()]);
+      // 下钻层的模型列表：直接对子集复用同一套聚合，口径完全一致。
+      for (const e of list) { e.models = summarizeUsage(e.models); }
+      return list;
+    }
+
+    // 两层共用派生字段。
+    function deriveSummary(list) {
       for (const e of list) {
         e.avgTokens = e.tokenReported > 0 ? Math.round(e.tokens / e.tokenReported) : null;
         e.avgDurationMs = e.calls > 0 ? Math.round(e.durationMs / e.calls) : 0;
         e.successRate = e.calls > 0 ? e.ok / e.calls : 0;
+        e.topErrors = [...e.errs.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2);
+        delete e.errs;
       }
       return list;
     }
@@ -3278,12 +3364,17 @@ window.__ModuleLoader__.load({
       // 没有通道就显示明确错误，而不是把整个 settings.section 拖崩。
       const channel = rpc ?? null;
 
-      // 三视图 + 共享筛选。同一份数据三种看法：明细（逐请求）、汇总（谁用得多）、
-      // 时间线（什么时候发生的）。筛选条件三者共用，切换标签不丢上下文。
-      const [tab, setTab] = useState('rows');
-      const [statusFilter, setStatusFilter] = useState('all');
+      // ── 两级下钻 ────────────────────────────────────────────
+      // provider === null 在第一层（厂商列表）；点进某厂商后第二层把
+      // 模型列表 / 请求明细 / 时间线三段平铺，且全部限定在该厂商内。
+      // 用户明确决定不按供应商归并 provider id：不同接入通道的成功率差异
+      // 本身就是有用信号（workbuddy 100% vs workbuddy-global 93%）。
+      const [provider, setProvider] = useState(null);
       const [query, setQuery] = useState('');
       const [sortBy, setSortBy] = useState('calls');
+      // 两个筛选器各管一层：failFilter 作用于模型聚合行，statusFilter 作用于逐请求行。
+      const [failFilter, setFailFilter] = useState('all');
+      const [statusFilter, setStatusFilter] = useState('all');
       const [expanded, setExpanded] = useState(() => new Set());
 
       useEffect(() => {
@@ -3306,34 +3397,114 @@ window.__ModuleLoader__.load({
 
       const allRows = snapshot?.recent ?? [];
       const status = snapshot?.status ?? null;
-      const wrap = { padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0, color: colors.text };
+      const wrap = { padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0, overflowY: 'auto', color: colors.text };
 
-      // ── 共享筛选（三个视图共用） ──────────────────────────
       const needle = query.trim().toLowerCase();
-      const rows = useMemo(() => allRows.filter((r) => {
+      const sortPick = { calls: e => e.calls, tokens: e => e.tokens, duration: e => e.durationMs, failures: e => e.failed }[sortBy] ?? (e => e.calls);
+      // 稳定排序：同值按 key 定序，避免每次渲染顺序跳动。
+      const sorted = list => list.slice().sort((a, b) => sortPick(b) - sortPick(a) || String(a.key).localeCompare(String(b.key)));
+
+      // ── 第一层：厂商 ────────────────────────────────────────
+      const l1 = useMemo(() => sorted(summarizeUsageByProvider(allRows)
+        .filter(e => !needle || e.provider.toLowerCase().includes(needle))), [allRows, needle, sortBy]);
+      const l1Max = useMemo(() => l1.reduce((m, e) => Math.max(m, e.calls), 0) || 1, [l1]);
+
+      // ── 第二层：该厂商内的模型 + 逐请求 ─────────────────────
+      const providerRows = useMemo(
+        () => (provider ? allRows.filter(r => r.provider === provider) : []), [allRows, provider]);
+      const l2 = useMemo(() => sorted(summarizeUsage(providerRows)
+        .filter(e => !needle || e.model.toLowerCase().includes(needle))
+        .filter(e => (failFilter === 'hasFailures' ? e.failed > 0 : failFilter === 'allOk' ? e.failed === 0 : true))),
+      [providerRows, needle, sortBy, failFilter]);
+      const l2Max = useMemo(() => l2.reduce((m, e) => Math.max(m, e.calls), 0) || 1, [l2]);
+
+      const detailRows = useMemo(() => providerRows.filter((r) => {
         if (statusFilter === 'ok' && r.ok !== true) return false;
         if (statusFilter === 'failed' && r.ok === true) return false;
         if (!needle) return true;
-        return `${r.provider ?? ''} ${r.model ?? ''} ${r.error?.code ?? ''}`.toLowerCase().includes(needle);
-      }), [allRows, statusFilter, needle]);
-      // 明细与时间线按时序倒序（最近的在上）；汇总另行排序。
-      const rowsDesc = useMemo(() => rows.slice().reverse(), [rows]);
-      const summary = useMemo(() => {
-        const list = summarizeUsage(rows);
-        const pick = { calls: e => e.calls, tokens: e => e.tokens, duration: e => e.durationMs }[sortBy] ?? (e => e.calls);
-        // 稳定排序：同值时按名称定序，避免每次渲染顺序跳动。
-        return list.slice().sort((a, b) => pick(b) - pick(a) || a.key.localeCompare(b.key));
-      }, [rows, sortBy]);
-      const maxCalls = useMemo(() => summary.reduce((m, e) => Math.max(m, e.calls), 0) || 1, [summary]);
+        return `${r.model ?? ''} ${r.error?.code ?? ''}`.toLowerCase().includes(needle);
+      }).slice().reverse(), [providerRows, statusFilter, needle]);
 
-      const kpi = useMemo(() => {
-        let tokens = 0, durationMs = 0;
-        for (const r of rows) {
-          if (r.usageReported === true) tokens += totalTokensOf(r);
-          if (Number.isSafeInteger(r.durationMs)) durationMs += r.durationMs;
-        }
-        return { requests: rows.length, tokens, durationMs };
-      }, [rows]);
+      // ── 小构件 ──────────────────────────────────────────────
+      // 成功率三档色阶：本页的核心可读性手段，一眼看出哪家在拖后腿。
+      const rateColor = r => (r >= 0.9 ? colors.ok : r >= 0.6 ? colors.warn : colors.danger);
+      const mono = { fontFamily: 'ui-monospace, Consolas, monospace' };
+      const stat = (content, style) => React.createElement('span', {
+        style: { ...mono, fontSize: '12px', textAlign: 'right', whiteSpace: 'nowrap', ...style },
+      }, content);
+      const chip = (id, label, active, onClick) => React.createElement('button', {
+        key: id, type: 'button', 'aria-pressed': active, onClick: () => onClick(id),
+        style: {
+          padding: '4px 12px', borderRadius: '999px', fontSize: '11.5px', cursor: 'pointer', whiteSpace: 'nowrap',
+          border: `1px solid ${active ? colors.accent : colors.border}`,
+          background: active ? tint(colors.accent, 12) : 'transparent',
+          color: active ? colors.accent : colors.muted,
+        },
+      }, label);
+      const sectionTitle = (title, hint) => React.createElement('div', {
+        style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' },
+      },
+      React.createElement('h2', { style: { fontSize: '14px', fontWeight: 700, color: colors.text, margin: 0 } }, title),
+      hint ? React.createElement('span', { style: { fontSize: '11.5px', color: colors.muted } }, hint) : null);
+      const toolbar = (...groups) => React.createElement('div', {
+        style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' },
+      }, ...groups);
+
+      // 卡片行：第一层（厂商）与第二层（模型）共用同一套版式。
+      // 用行卡片而不是密集表格 —— 表格在窄设置页里会把列挤成半个词。
+      const cardRow = (e, { max, leading, badge, isOpen, onOpen }) => React.createElement('div', {
+        key: e.key,
+        role: 'button', tabIndex: 0, 'aria-expanded': !!isOpen,
+        onClick: onOpen,
+        onKeyDown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onOpen(); } },
+        style: {
+          padding: '12px 14px', borderBottom: `1px solid ${colors.border}`, cursor: 'pointer',
+          borderLeft: `3px solid ${rateColor(e.successRate)}`,
+          background: isOpen ? tint(colors.accent, 6) : 'transparent',
+        },
+      },
+      React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '13px', flexWrap: 'wrap' } },
+        React.createElement('span', { style: { width: '11px', flex: 'none', color: colors.muted, fontSize: '9px' } }, isOpen ? '▾' : '▸'),
+        React.createElement('span', { style: { display: 'flex', alignItems: 'baseline', gap: '9px', flex: '1 1 190px', minWidth: 0 } },
+          React.createElement('b', {
+            title: leading,
+            style: { fontSize: '13.5px', fontWeight: 650, color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+          }, leading),
+          badge),
+        // 用量条：按本层最大值归一；颜色即成功率，条长即用量
+        React.createElement('span', {
+          title: `${e.calls}`,
+          style: { height: '5px', width: '84px', flex: 'none', background: colors.panel2, borderRadius: '3px', overflow: 'hidden' },
+        }, React.createElement('span', {
+          style: { display: 'block', height: '100%', width: `${Math.max(2, Math.round((e.calls / max) * 100))}%`, background: rateColor(e.successRate) },
+        })),
+        stat(String(e.calls), { minWidth: '44px', color: colors.text }),
+        stat(e.tokenReported > 0 ? (formatTokens(e.tokens) || '—') : '—', { color: colors.muted, minWidth: '60px' }),
+        stat(formatDuration(e.durationMs) || '—', { color: colors.muted, minWidth: '58px' }),
+        stat(String(e.failed), { color: e.failed > 0 ? colors.danger : colors.muted, minWidth: '34px' }),
+        stat(`${Math.round(e.successRate * 100)}%`, { color: rateColor(e.successRate), fontWeight: 600, minWidth: '42px' }),
+      ),
+      isOpen
+        ? React.createElement('div', {
+          style: { display: 'flex', gap: '22px', flexWrap: 'wrap', padding: '10px 14px 2px 25px', fontSize: '11.5px', color: colors.muted },
+        },
+        React.createElement('span', null, `${t('usageColAvgDuration')} `,
+          React.createElement('b', { style: { ...mono, color: colors.text, fontWeight: 500 } }, formatDuration(e.avgDurationMs) || '—')),
+        React.createElement('span', null, `${t('usageColAvgTokens')} `,
+          // formatTokens(0) 返回空串（上报了但总量为 0，例如整轮全失败的模型），
+          // 不兜底就会渲染出一个空白值，看着像渲染坏了。
+          React.createElement('b', { style: { ...mono, color: e.avgTokens === null ? colors.muted : colors.text, fontWeight: 500 } },
+            e.avgTokens === null ? t('usageTokensUnavailable') : (formatTokens(e.avgTokens) || '0'))),
+        React.createElement('span', null, `${t('usageTopErrors')} `,
+          React.createElement('b', { style: { ...mono, color: e.topErrors.length ? colors.danger : colors.muted, fontWeight: 500 } },
+            e.topErrors.length ? e.topErrors.map(([c, n]) => `${c}×${n}`).join('  ') : t('usageNoErrors'))),
+        e.firstAt ? React.createElement('span', null, `${t('usageFirstUse')} `,
+          React.createElement('b', { style: { ...mono, color: colors.text, fontWeight: 500 } }, new Date(e.firstAt).toLocaleDateString())) : null,
+        e.lastAt ? React.createElement('span', null, `${t('usageLastUse')} `,
+          React.createElement('b', { style: { ...mono, color: colors.text, fontWeight: 500 } }, new Date(e.lastAt).toLocaleString())) : null,
+        )
+        : null,
+      );
 
       const th = (label, align) => React.createElement('th', {
         key: label,
@@ -3351,13 +3522,145 @@ window.__ModuleLoader__.load({
       }, content);
       // 表格容器：横向也可滚，内容再宽也不裁掉内容本身。
       const table = (heads, body) => React.createElement('div', {
-        style: { flex: 1, minHeight: 0, overflow: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px' },
+        style: { overflow: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px' },
       }, React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } },
         React.createElement('thead', null, React.createElement('tr', null, heads)),
         React.createElement('tbody', null, body)));
 
+      const listShell = children => React.createElement('div', {
+        style: { border: `1px solid ${colors.border}`, borderRadius: '10px', overflow: 'hidden', background: colors.panel },
+      }, ...children);
+
+      const sortChips = () => React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 'none' } },
+        [['calls', t('usageSortCalls')], ['tokens', t('usageSortTokens')], ['duration', t('usageSortDuration')], ['failures', t('usageSortFailures')]]
+          .map(([id, label]) => chip(id, label, sortBy === id, setSortBy)));
+
+      const searchBox = placeholder => React.createElement('input', {
+        type: 'search', value: query, placeholder, 'aria-label': placeholder,
+        onChange: (event) => setQuery(event?.target?.value ?? ''),
+        style: {
+          flex: '1 1 150px', minWidth: '130px', maxWidth: '230px', padding: '5px 10px', fontSize: '12px',
+          background: colors.panel ?? '#1a1a1c', color: colors.text,
+          border: `1px solid ${colors.border}`, borderRadius: '7px', outline: 'none',
+        },
+      });
+
+      const toggleExpanded = key => setExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        return next;
+      });
+
+      // ── 第二层内容 ──────────────────────────────────────────
+      const drillView = () => {
+        const head = React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
+          React.createElement('button', {
+            type: 'button',
+            onClick: () => { setProvider(null); setExpanded(new Set()); setQuery(''); },
+            style: { border: `1px solid ${colors.border}`, background: 'transparent', color: colors.accent, cursor: 'pointer', fontSize: '12px', padding: '4px 11px', borderRadius: '999px', whiteSpace: 'nowrap' },
+          }, t('usageBackToProviders')),
+          React.createElement('span', { style: { fontSize: '15px', fontWeight: 700, color: colors.text } }, String(provider)),
+          React.createElement('span', { style: { fontSize: '11.5px', color: colors.muted } },
+            `${providerRows.length} ${t('usageKpiRequests')} · ${l2.length} ${t('usageModelCountLabel')}`),
+          onClose
+            ? React.createElement('button', {
+              type: 'button', onClick: onClose,
+              style: { marginLeft: 'auto', border: 'none', background: 'transparent', color: colors.muted, cursor: 'pointer', fontSize: '12px' },
+            }, t('close'))
+            : null,
+        );
+
+        if (loading) return React.createElement('div', { style: { ...wrap }, key: 'l2-loading' }, head, React.createElement('div', { style: { color: colors.muted, fontSize: '13px' } }, t('loading')));
+        if (error) return React.createElement('div', { style: { ...wrap }, key: 'l2-error' }, head, React.createElement('div', { style: { color: colors.danger, fontSize: '12.5px' } }, error));
+
+        return React.createElement('div', { style: wrap, key: 'l2' },
+          head,
+
+          // ① 该厂商下的模型
+          sectionTitle(t('usageL2Models'), t('usageL1Hint')),
+          toolbar(sortChips(),
+            React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
+              [['all', t('usageFilterAll')], ['hasFailures', t('usageFilterHasFailures')], ['allOk', t('usageFilterAllOk')]]
+                .map(([id, label]) => chip(id, label, failFilter === id, setFailFilter)),
+              searchBox(t('usageSearchModel')))),
+          l2.length === 0
+            ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px', padding: '14px 0' } }, t('usageNoMatch'))
+            : listShell(l2.map(e => cardRow(e, {
+              max: l2Max,
+              leading: e.model,
+              badge: null,
+              isOpen: expanded.has(e.key),
+              onOpen: () => toggleExpanded(e.key),
+            }))),
+
+          // ② 请求明细（限定该厂商）
+          React.createElement('div', { style: { height: '4px' } }),
+          sectionTitle(t('usageL2Rows'), `${detailRows.length} ${t('usageKpiRequests')}`),
+          toolbar(
+            React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 'none' } },
+              [['all', t('usageFilterAll')], ['ok', t('usageFilterOk')], ['failed', t('usageFilterFailed')]]
+                .map(([id, label]) => chip(id, label, statusFilter === id, setStatusFilter))),
+            searchBox(t('usageSearchModel'))),
+          detailRows.length === 0
+            ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px', padding: '10px 0' } }, t('usageNoMatch'))
+            : table(
+              [th(t('usageColTime')), th(t('usageColModel')), th(t('usageColTokens'), 'right'),
+                th(t('usageColDuration'), 'right'), th(t('usageColFirstChunk'), 'right'), th(t('usageColStatus')), th(t('usageColSession'))],
+              detailRows.map((row, index) => {
+                const hasTokens = row.usageReported === true;
+                return React.createElement('tr', { key: `${row.requestId ?? index}` },
+                  td(new Date(row.startedAt).toLocaleTimeString(), { title: new Date(row.startedAt).toLocaleString(), ...mono }),
+                  td(String(row.model), { color: colors.text }),
+                  td(hasTokens ? (formatTokens(totalTokensOf(row)) || '0') : '—', {
+                    textAlign: 'right', ...mono,
+                    title: hasTokens
+                      ? `in ${row.inputTokens ?? 0} / out ${row.outputTokens ?? 0} / cache ${row.cacheReadTokens ?? 0}`
+                      : t('usageTokensUnavailable'),
+                  }),
+                  td(formatDuration(row.durationMs) || '—', { textAlign: 'right', ...mono }),
+                  td(row.firstChunkMs !== undefined && row.firstChunkMs !== null ? `${(row.firstChunkMs / 1000).toFixed(1)}s` : '—', { textAlign: 'right', ...mono }),
+                  td(row.ok ? t('usageOk') : (row.error?.code ?? t('usageFailed')),
+                    { color: row.ok ? colors.ok : colors.danger, maxWidth: 'none', ...mono },
+                    row.ok ? t('usageOk') : String(row.error?.code ?? t('usageFailed'))),
+                  td(row.sessionId ? String(row.sessionId).slice(0, 8) : '—', { textAlign: 'right', ...mono }, row.sessionId ?? undefined),
+                );
+              }),
+            ),
+
+          // ③ 时间线（限定该厂商）
+          React.createElement('div', { style: { height: '4px' } }),
+          sectionTitle(t('usageL2Timeline'), t('usageKpiDuration')),
+          React.createElement('div', {
+            style: { border: `1px solid ${colors.border}`, borderRadius: '10px', overflow: 'hidden' },
+          },
+          detailRows.map((r, i) => React.createElement('div', {
+            key: `${r.requestId ?? i}`,
+            style: { display: 'flex', gap: '10px', padding: '8px 12px', borderBottom: `1px solid ${colors.border}` },
+          },
+            React.createElement('span', { style: { width: '64px', textAlign: 'right', color: colors.muted, fontSize: '11px', ...mono } },
+              new Date(r.startedAt).toLocaleTimeString()),
+            React.createElement('span', {
+              title: r.ok ? t('usageOk') : (r.error?.code ?? t('usageFailed')),
+              style: { width: '7px', height: '7px', borderRadius: '50%', marginTop: '5px', flex: 'none', background: r.ok ? colors.ok : colors.danger },
+            }),
+            React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+              React.createElement('div', { style: { fontSize: '12.5px', color: colors.text } }, String(r.model)),
+              React.createElement('div', { style: { fontSize: '11px', color: colors.muted, ...mono } },
+                [
+                  r.usageReported === true ? formatTokens(totalTokensOf(r)) : '—',
+                  formatDuration(r.durationMs) || '—',
+                  r.firstChunkMs !== undefined ? `${t('usageColFirstChunk')} ${(r.firstChunkMs / 1000).toFixed(1)}s` : null,
+                  r.ok ? null : (r.error?.code ?? t('usageFailed')),
+                ].filter(Boolean).join(' · '))),
+          ))),
+        );
+      };
+
+      // ── 第一层内容 ──────────────────────────────────────────
+      if (provider) return drillView();
+
       return React.createElement('div', { style: wrap },
-        React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+        React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
           React.createElement('span', { style: { fontSize: '15px', fontWeight: 700, color: colors.text } }, t('usageDetailTitle')),
           React.createElement('span', { style: { fontSize: '11px', color: colors.muted } },
             status ? `${t('usageDetailCallsLabel')} ${status.recordCount}` : ''),
@@ -3368,184 +3671,27 @@ window.__ModuleLoader__.load({
             }, t('close'))
             : null,
         ),
-        // ── 工具栏：视图标签 / 状态筛选 / 搜索 ────────────────
-        //
-        // 两组按钮必须各占一个 flex 容器并允许换行：挤在同一个容器里时，
-        // 设置页宽度不够会把 6 个胶囊压成竖排文字（实测踩过）。
-        React.createElement('div', {
-          style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' },
-        },
-          React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 'none' } },
-            [['rows', t('usageTabRows')], ['summary', t('usageTabSummary')], ['timeline', t('usageTabTimeline')]]
-              .map(([id, label]) => React.createElement('button', {
-                key: id,
-                type: 'button',
-                'aria-pressed': tab === id,
-                onClick: () => setTab(id),
-                style: {
-                  padding: '5px 13px', borderRadius: '999px', fontSize: '12px', cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                  border: `1px solid ${tab === id ? colors.accent : colors.border}`,
-                  background: tab === id ? tint(colors.accent, 12) : 'transparent',
-                  color: tab === id ? colors.accent : colors.muted,
-                },
-              }, label)),
-          ),
-          // 状态筛选 + 搜索：三个视图共用，切标签不丢上下文
-          React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
-            [['all', t('usageFilterAll')], ['ok', t('usageFilterOk')], ['failed', t('usageFilterFailed')]]
-              .map(([id, label]) => React.createElement('button', {
-                key: id,
-                type: 'button',
-                'aria-pressed': statusFilter === id,
-                onClick: () => setStatusFilter(id),
-                style: {
-                  padding: '4px 11px', borderRadius: '999px', fontSize: '11.5px', cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                  border: `1px solid ${statusFilter === id ? colors.accent : colors.border}`,
-                  background: statusFilter === id ? tint(colors.accent, 12) : 'transparent',
-                  color: statusFilter === id ? colors.accent : colors.muted,
-                },
-              }, label)),
-            React.createElement('input', {
-            type: 'search',
-            value: query,
-            placeholder: t('usageSearchPlaceholder'),
-            'aria-label': t('usageSearchPlaceholder'),
-            onChange: (event) => setQuery(event?.target?.value ?? ''),
-            style: {
-              flex: '1 1 150px', minWidth: '130px', maxWidth: '230px',
-              padding: '5px 10px', fontSize: '12px',
-              background: colors.panel ?? '#1a1a1c', color: colors.text,
-              border: `1px solid ${colors.border}`, borderRadius: '7px', outline: 'none',
-            },
-          }),
-          ),
-        ),
         loading
           ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px' } }, t('loading'))
           : error
             ? React.createElement('div', { style: { color: colors.danger, fontSize: '12.5px' } }, error)
-            : rows.length === 0
+            : l1.length === 0
               ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px' } },
                 allRows.length === 0 ? t('usageEmpty') : t('usageNoMatch'))
-              : tab === 'summary'
-                // ── 视图 B：按模型汇总（谁用得多） ──────────────
-                ? React.createElement('div', {
-                  style: { flex: 1, minHeight: 0, overflow: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px' },
-                },
-                  React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } },
-                    React.createElement('thead', null, React.createElement('tr', null,
-                      th(t('usageColModel')), th('', ''), th(t('usageColCount'), 'right'),
-                      th(t('usageColTokens'), 'right'), th(t('usageColDuration'), 'right'),
-                      th(t('usageColFailures'), 'right'), th(t('usageColAvgTokens'), 'right'),
-                      th(t('usageColSuccessRate'), 'right'))),
-                    React.createElement('tbody', null,
-                      summary.map((e) => {
-                        const isOpen = expanded.has(e.key);
-                        const detail = rows.filter(r => `${r.provider}/${r.model}` === e.key);
-                        return React.createElement(React.Fragment, { key: e.key },
-                          React.createElement('tr', {
-                            onClick: () => setExpanded(prev => {
-                              const next = new Set(prev);
-                              if (next.has(e.key)) next.delete(e.key); else next.add(e.key);
-                              return next;
-                            }),
-                            style: { cursor: 'pointer', borderBottom: `1px solid ${colors.border}`, background: isOpen ? tint(colors.accent, 7) : 'transparent' },
-                          },
-                            td(`${isOpen ? '▾' : '▸'} ${e.model}`, { color: colors.text }),
-                            td(e.provider),
-                            td(React.createElement('div', { style: { height: '4px', background: '#2a2a30', borderRadius: '2px', overflow: 'hidden', minWidth: '70px' } },
-                              React.createElement('div', { style: { height: '100%', width: `${Math.round((e.calls / maxCalls) * 100)}%`, background: colors.accent } }))),
-                            td(String(e.calls), { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
-                            td(e.tokenReported > 0 ? formatTokens(e.tokens) : '—', { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
-                            td(formatDuration(e.durationMs) || '—', { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
-                            td(e.failed > 0 ? String(e.failed) : '0', { textAlign: 'right', color: e.failed > 0 ? colors.danger : colors.muted, fontFamily: 'ui-monospace, Consolas, monospace' }),
-                            td(e.avgTokens !== null ? formatTokens(e.avgTokens) : '—', { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
-                            td(`${Math.round(e.successRate * 100)}%`, {
-                              textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace',
-                              color: e.successRate >= 0.9 ? colors.ok : e.successRate >= 0.6 ? colors.text : colors.danger,
-                            }),
-                          ),
-                          isOpen
-                            ? React.createElement('tr', null,
-                              React.createElement('td', { colSpan: 8, style: { padding: '4px 9px 9px 26px', borderBottom: `1px solid ${colors.border}`, background: tint(colors.accent, 4) } },
-                                detail.slice(-8).reverse().map((r, i) => React.createElement('div', {
-                                  key: `${r.requestId ?? i}`,
-                                  style: { display: 'flex', gap: '10px', fontSize: '11.5px', color: colors.muted, padding: '2px 0', fontFamily: 'ui-monospace, Consolas, monospace' },
-                                },
-                                  React.createElement('span', { style: { width: '62px' } }, new Date(r.startedAt).toLocaleTimeString()),
-                                  React.createElement('span', { style: { flex: 1, color: colors.text } }, String(r.model)),
-                                  React.createElement('span', { style: { width: '68px', textAlign: 'right' } }, r.usageReported === true ? formatTokens(totalTokensOf(r)) : '—'),
-                                  React.createElement('span', { style: { width: '58px', textAlign: 'right' } }, formatDuration(r.durationMs) || '—'),
-                                  React.createElement('span', { style: { width: '38px', textAlign: 'right', color: r.ok ? colors.ok : colors.danger } }, r.ok ? '✓' : '✕'),
-                                )),
-                                detail.length > 8
-                                  ? React.createElement('div', { style: { fontSize: '11px', color: colors.muted, paddingTop: '3px' } }, `… ${detail.length - 8} ${t('usageMore')}`)
-                                  : null,
-                              ))
-                            : null,
-                        );
-                      }),
-                    ),
-                  ),
-                )
-                : tab === 'timeline'
-                  // ── 视图 C：时间线（什么时候发生的） ────────────
-                  ? React.createElement('div', {
-                    style: { flex: 1, minHeight: 0, overflowY: 'auto', border: `1px solid ${colors.border}`, borderRadius: '10px', padding: '4px 0' },
-                  },
-                    rowsDesc.map((r, i) => React.createElement('div', {
-                      key: `${r.requestId ?? i}`,
-                      style: { display: 'flex', gap: '10px', padding: '7px 12px', borderBottom: `1px solid ${colors.border}` },
-                    },
-                      React.createElement('span', { style: { width: '64px', textAlign: 'right', color: colors.muted, fontSize: '11px', fontFamily: 'ui-monospace, Consolas, monospace' } },
-                        new Date(r.startedAt).toLocaleTimeString()),
-                      React.createElement('span', {
-                        title: r.ok ? t('usageOk') : (r.error?.code ?? t('usageFailed')),
-                        style: { width: '7px', height: '7px', borderRadius: '50%', marginTop: '5px', flex: 'none', background: r.ok ? colors.ok : colors.danger },
-                      }),
-                      React.createElement('div', { style: { flex: 1, minWidth: 0 } },
-                        React.createElement('div', { style: { fontSize: '12.5px', color: colors.text } },
-                          String(r.model),
-                          React.createElement('span', { style: { color: colors.muted, fontSize: '11px' } }, ` · ${r.provider}`)),
-                        React.createElement('div', { style: { fontSize: '11px', color: colors.muted, fontFamily: 'ui-monospace, Consolas, monospace' } },
-                          [
-                            r.usageReported === true ? formatTokens(totalTokensOf(r)) : '—',
-                            formatDuration(r.durationMs) || '—',
-                            r.firstChunkMs !== undefined ? `${t('usageColFirstChunk')} ${(r.firstChunkMs / 1000).toFixed(1)}s` : null,
-                            r.ok ? null : (r.error?.code ?? t('usageFailed')),
-                            r.sessionId ? `${t('usageColSession')} ${String(r.sessionId).slice(0, 8)}` : null,
-                          ].filter(Boolean).join(' · ')),
-                      ),
-                    )),
-                  )
-                  // ── 视图 A：明细表（逐请求） ──────────────────
-                  : table(
-                    [th(t('usageColTime')), th(t('usageColProvider')), th(t('usageColModel')),
-                      th(t('usageColTokens'), 'right'), th(t('usageColDuration'), 'right'), th(t('usageColStatus'))],
-                    rowsDesc.map((row, index) => {
-                      const tokens = totalTokensOf(row);
-                      const hasTokens = row.usageReported === true;
-                      return React.createElement('tr', { key: `${row.requestId ?? index}` },
-                        td(new Date(row.startedAt).toLocaleTimeString(), {
-                          title: new Date(row.startedAt).toLocaleString(), fontFamily: 'ui-monospace, Consolas, monospace',
-                        }),
-                        td(String(row.provider)),
-                        td(String(row.model), { color: colors.text }),
-                        td(hasTokens ? formatTokens(tokens) : '—', {
-                          textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace',
-                          title: hasTokens
-                            ? `in ${row.inputTokens ?? 0} / out ${row.outputTokens ?? 0} / cache ${row.cacheReadTokens ?? 0}`
-                            : t('usageTokensUnavailable'),
-                        }),
-                        td(formatDuration(row.durationMs) || '—', { textAlign: 'right', fontFamily: 'ui-monospace, Consolas, monospace' }),
-                        td(row.ok ? t('usageOk') : (row.error?.code ?? t('usageFailed')),
-                          { color: row.ok ? colors.ok : colors.danger, maxWidth: 'none', fontFamily: 'ui-monospace, Consolas, monospace' },
-                          row.ok ? t('usageOk') : `${row.error?.code ?? t('usageFailed')}`),
-                      );
-                    }),
-                  ),
+              : React.createElement(React.Fragment, null,
+                sectionTitle(t('usageL1Title'), t('usageL1Hint')),
+                toolbar(sortChips(),
+                  React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
+                    searchBox(t('usageSearchProvider')))),
+                listShell(l1.map(e => cardRow(e, {
+                  max: l1Max,
+                  leading: e.provider,
+                  badge: React.createElement('span', {
+                    style: { fontSize: '10.5px', padding: '1px 8px', borderRadius: '999px', background: colors.panel2, color: colors.muted, whiteSpace: 'nowrap' },
+                  }, `${e.models.length} ${t('usageModelCountLabel')}`),
+                  isOpen: false,
+                  onOpen: () => { setProvider(e.provider); setExpanded(new Set()); setQuery(''); },
+                })))),
       );
     });
 
@@ -3602,6 +3748,7 @@ window.__ModuleLoader__.load({
       usageBadge,
       totalTokensOf,
       summarizeUsage,
+      summarizeUsageByProvider,
       requestUsageSnapshot,
       UsagePill,
       UsageDetailPage,

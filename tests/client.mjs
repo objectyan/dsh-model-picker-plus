@@ -1211,8 +1211,11 @@ console.log('\n== 用量展示与排序 ==');
     check('缺字段按 0 计，不产生 NaN',
       Number.isFinite(totalTokensOf({ inputTokens: 10 })) && totalTokensOf({ inputTokens: 10 }) === 10);
 
-    check('明细表包含表头字段', ['usageColTime', 'usageColProvider', 'usageColModel', 'usageColTokens', 'usageColDuration', 'usageColStatus']
+    // 第二层的明细表：整页已限定在单一厂商内，所以不再重复 provider 列
+    // （留着它等于每行都印同一个词），改为补上首字延迟与会话定位。
+    check('明细表包含表头字段', ['usageColTime', 'usageColModel', 'usageColTokens', 'usageColDuration', 'usageColFirstChunk', 'usageColStatus', 'usageColSession']
       .every(key => page.includes(key)));
+    check('明细表不再重复 provider 列（整页已限定该厂商）', !page.includes("th(t('usageColProvider'))"));
     check('明细表不再有无意义的「调用」列', !page.includes("t('usageColCalls')"));
     check('明细表用 usageReported 判断 token 是否可用', page.includes('row.usageReported'));
     check('失败请求有区分标记', page.includes('usageFailed') && page.includes('row.ok'));
@@ -1225,8 +1228,8 @@ console.log('\n== 用量展示与排序 ==');
     check('RPC 通道在注册时经闭包解析',
       src.slice(src.indexOf('function apply(ctx)')).includes('resolveSettingsRpc(ctx)'));
 
-    // 三视图：明细 / 汇总 / 时间线，同一份数据三种看法，筛选条件共用。
-    const { summarizeUsage } = plugin.__test;
+    // 两级下钻：第一层厂商、第二层该厂商的模型 + 明细 + 时间线（三段平铺，不做 tab 切换）。
+    const { summarizeUsage, summarizeUsageByProvider } = plugin.__test;
     check('汇总函数已导出', typeof summarizeUsage === 'function');
     if (typeof summarizeUsage === 'function') {
       const sample = [
@@ -1246,23 +1249,64 @@ console.log('\n== 用量展示与排序 ==');
       check('汇总成功率在 0..1', pm.successRate > 0.6 && pm.successRate < 0.7, `rate=${pm?.successRate}`);
       check('汇总对空输入不崩', Array.isArray(summarizeUsage(null)) && summarizeUsage(null).length === 0);
       check('汇总跳过非对象行', summarizeUsage([null, undefined, 7]).length === 0);
+      // 展开行要显示「主要错误」，所以逐码计数后取前二。
+      check('汇总统计错误码分布', pm.topErrors?.[0]?.[0] === 'UNKNOWN', JSON.stringify(pm?.topErrors));
+      check('派生后不泄漏内部 Map（可安全 JSON 化）', pm.errs === undefined);
     }
-    check('三个视图标签齐备', ['usageTabRows', 'usageTabSummary', 'usageTabTimeline']
-      .every(key => src.includes(`usageTab${key.slice(8)}:`) || src.includes(key)));
-    check('视图由 tab 状态切换', page.includes("useState('rows')") && page.includes("tab === 'summary'") && page.includes("tab === 'timeline'"));
+    check('厂商聚合函数已导出', typeof summarizeUsageByProvider === 'function');
+    if (typeof summarizeUsageByProvider === 'function') {
+      const sample = [
+        { provider: 'alpha', model: 'm1', ok: true, durationMs: 100, usageReported: true, inputTokens: 10, outputTokens: 20, startedAt: 1000 },
+        { provider: 'alpha', model: 'm1', ok: false, durationMs: 300, usageReported: false, startedAt: 2000, error: { code: 'RATE_LIMIT' } },
+        { provider: 'alpha', model: 'm2', ok: true, durationMs: 200, usageReported: true, inputTokens: 5, outputTokens: 5, startedAt: 3000 },
+        { provider: 'beta', model: 'm1', ok: true, durationMs: 50, usageReported: true, inputTokens: 1, outputTokens: 1, startedAt: 4000 },
+      ];
+      const byProv = summarizeUsageByProvider(sample);
+      check('第一层按厂商分组', byProv.length === 2, `groups=${byProv.length}`);
+      const alpha = byProv.find(e => e.provider === 'alpha');
+      check('厂商层累计其下全部请求', alpha.calls === 3 && alpha.ok === 2 && alpha.failed === 1,
+        `calls=${alpha?.calls} ok=${alpha?.ok} failed=${alpha?.failed}`);
+      check('厂商层带出模型子列表供下钻', Array.isArray(alpha.models) && alpha.models.length === 2,
+        `models=${alpha?.models?.length}`);
+      check('模型子列表与顶层聚合口径一致', alpha.models.reduce((s, m) => s + m.calls, 0) === alpha.calls);
+      check('厂商层统计主要错误码', alpha.topErrors?.[0]?.[0] === 'RATE_LIMIT',
+        JSON.stringify(alpha?.topErrors));
+      check('厂商层记录首次/最近使用时间', alpha.firstAt === 1000 && alpha.lastAt === 3000,
+        `first=${alpha?.firstAt} last=${alpha?.lastAt}`);
+      // 用户明确决定：不按供应商归并 provider id。qoder 与 dsh-provider-qoder
+      // 虽同属一家，但通道成功率差异本身是信号，归并会抹掉它。
+      const ids = summarizeUsageByProvider([
+        { provider: 'qoder', model: 'qfmodel', ok: false, durationMs: 1 },
+        { provider: 'dsh-provider-qoder', model: 'qfmodel', ok: true, durationMs: 1 },
+      ]).map(e => e.provider).sort();
+      check('不合并同供应商的多个 provider id', ids.length === 2 && ids[0] === 'dsh-provider-qoder',
+        JSON.stringify(ids));
+      check('厂商聚合跳过非对象行', summarizeUsageByProvider([null, 7, undefined]).length === 0);
+      check('厂商聚合对空输入不崩', Array.isArray(summarizeUsageByProvider(null)) && summarizeUsageByProvider(null).length === 0);
+    }
+    check('第二层由 provider 状态驱动下钻', page.includes('useState(null)') && page.includes('if (provider) return drillView()'));
+    check('下钻后模型/明细/时间线三段平铺', ['usageL2Models', 'usageL2Rows', 'usageL2Timeline']
+      .every(key => page.includes(key)));
+    check('下钻层可返回厂商列表', page.includes('usageBackToProviders') && page.includes('setProvider(null)'));
+    check('下钻层数据限定在该厂商内', page.includes('r.provider === provider'));
+    check('成功率三档色阶齐备', page.includes('colors.ok : ') && page.includes('colors.warn : colors.danger'));
+    check('warn 色有主题 token 与兜底值', /warn:\s*'var\(--dsw-alias-state-warning-primary,\s*#d9a441\)'/
+      .test(src));
 
     // 布局回归（实测踩过）：6 个胶囊挤在同一个 flex 容器且不允许换行时，
     // 窄栏会把它们压成竖排单字（截图里「明细」被拆成上下两个字）。
-    // 只取工具栏那一段：从注释锚点到 loading 三元分支为止。
-    // 结束锚不能取 i18n 键名（它们在标签数组里出现得更早，会把工具栏尾部切掉）。
-    const tbStart = page.indexOf('工具栏');
-    const tbEnd = page.indexOf("t('loading')", tbStart);
-    const toolbar = tbStart > 0 && tbEnd > tbStart ? page.slice(tbStart, tbEnd) : '';
-    check('工具栏锚点可定位', toolbar.length > 0, `start=${tbStart} end=${tbEnd}`);
-    check('工具栏容器允许换行', /flexWrap: 'wrap'/.test(toolbar), 'toolbar must wrap');
-    check('视图标签与筛选分组到独立容器',
-      toolbar.includes("flex: 'none'") && toolbar.includes("flex: '1 1 260px'"));
-    check('胶囊按钮禁止文字折行', (toolbar.match(/whiteSpace: 'nowrap'/g) ?? []).length >= 2);
+    // 新实现把胶囊与工具栏抽成了 chip() / toolbar() 两个构件，所以直接钉构件本身：
+    // 一处修好，两层（厂商 / 模型）同时受益，不必逐处重复断言。
+    const chipAt = page.indexOf('const chip = ');
+    const toolbarAt = page.indexOf('const toolbar = ');
+    const chipSrc = chipAt > 0 ? page.slice(chipAt, page.indexOf('}, label);', chipAt)) : '';
+    const toolbarSrc = toolbarAt > 0 ? page.slice(toolbarAt, page.indexOf('}, ...groups));', toolbarAt)) : '';
+    check('chip / toolbar 构件可定位', chipSrc.length > 0 && toolbarSrc.length > 0,
+      `chip=${chipSrc.length} toolbar=${toolbarSrc.length}`);
+    check('工具栏容器允许换行', /flexWrap: 'wrap'/.test(toolbarSrc), 'toolbar must wrap');
+    check('胶囊按钮禁止文字折行', /whiteSpace: 'nowrap'/.test(chipSrc));
+    check('排序组与筛选组分开容器（互不挤压）',
+      page.includes("flex: 'none'") && page.includes("flex: '1 1 260px'"));
     check('搜索框有最小宽度且不被固定宽度挤爆',
       page.includes("flex: '1 1 150px'") && page.includes("minWidth: '130px'"));
     // 表格回归：状态列曾被裁成 RATE_L（列被内容撑破 + nowrap 又无省略）。
