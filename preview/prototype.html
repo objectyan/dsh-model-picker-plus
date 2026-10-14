@@ -153,11 +153,11 @@
         <div class="l3"><i style="width:64%"><b class="g" style="width:93%"></b><b class="r" style="width:7%"></b></i></div>
       </div>
 
-      <div class="m" style="border-left-color:var(--warn)">
+      <div class="m" style="border-left-color:var(--ok)">
         <div class="l1"><span class="caret">▸</span><span class="nm">dsh-provider-qoder</span><span class="badge">1 模型</span>
-          <span class="num ok">✓75</span><span class="num bad">✕16</span><span class="num warn" style="font-weight:600">82%</span></div>
-        <div class="l2">91 调用  ·  8.6M  ·  18m 7s</div>
-        <div class="l3"><i style="width:14%"><b class="g" style="width:82%"></b><b class="r" style="width:18%"></b></i></div>
+          <span class="num ok">✓360</span><span class="num bad">✕70</span><span class="num ok" style="font-weight:600">84%</span></div>
+        <div class="l2">430 调用  ·  62.6M  ·  1h 24m</div>
+        <div class="l3"><i style="width:66%"><b class="g" style="width:84%"></b><b class="r" style="width:16%"></b></i></div>
       </div>
 
       <div class="m" style="border-left-color:var(--warn)">
@@ -338,6 +338,93 @@
         <div class="c"><div class="n">muse-spark-1.3-contributor-free</div>
           <div class="x"><span class="bad">PI_AI_ERROR</span> · 20.1s</div></div></div>
     </div>
+  </div>
+</div>
+
+<!-- ═══════════ 只有一个模型时的样子（dsh-provider-qoder）═══════════
+     排序按钮、展开下拉、有失败/全成功筛选全部不渲染 —— 只有一个模型时
+     它们点不出任何变化。明细的成败筛选仍然保留，因为该厂商确实有成有败。 -->
+<div class="drill"><span class="lbl">↓ 只有一个模型的厂商：控件按「点了会不会变」取舍</span></div>
+
+<div class="crumb" style="margin-top:22px;border-top:1px solid var(--line)">
+  <span>设置</span><span class="sep">/</span><a href="#">模型用量明细</a><span class="sep">/</span><b>dsh-provider-qoder</b>
+</div>
+
+<div class="main">
+  <div class="bar" style="margin:0">
+    <span class="chip">‹ 全部厂商</span>
+    <h1 style="display:inline;font-size:17px">dsh-provider-qoder</h1>
+    <span class="sub">430 总请求数 · 1 模型数</span>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><h2>该厂商下的模型</h2></div>
+    <!-- 这里没有工具栏：排序（1 项无从排序）、下拉（1 项无从选择）、
+         有失败/全成功（唯一一项就是它自己）都点不出变化 -->
+    <div class="rows">
+      <div class="m" style="border-left-color:var(--ok)">
+        <div class="l1"><span class="caret">▸</span><span class="nm">qfmodel</span>
+          <span class="num ok">✓360</span><span class="num bad">✕70</span><span class="num ok" style="font-weight:600">84%</span></div>
+        <div class="l2">430 调用  ·  62.6M  ·  1h 24m</div>
+        <div class="l3"><i style="width:100%"><b class="g" style="width:84%"></b><b class="r" style="width:16%"></b></i></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><h2>分时</h2><span>各时段成功率接近，未见时段效应（76%–86%）</span></div>
+    <div class="hrs">
+      <div class="hr off" title="00:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>00</span></div>
+      <div class="hr off" title="01:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>01</span></div>
+      <div class="hr off" title="02:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>02</span></div>
+      <div class="hr off" title="03:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>03</span></div>
+      <div class="hr off" title="04:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>04</span></div>
+      <div class="hr off" title="05:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>05</span></div>
+      <div class="hr off" title="06:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>06</span></div>
+      <div class="hr off" title="07:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>07</span></div>
+      <div class="hr" title="08:00 · 65 调用 · 56 成功 · 9 失败 · 86%"><div class="slot"><i style="height:48%"><b class="r" style="flex-grow:9"></b><b class="g" style="flex-grow:56"></b></i></div><span>08</span></div>
+      <div class="hr" title="09:00 · 132 调用 · 110 成功 · 22 失败 · 83%"><div class="slot"><i style="height:97%"><b class="r" style="flex-grow:22"></b><b class="g" style="flex-grow:110"></b></i></div><span>09</span></div>
+      <div class="hr" title="10:00 · 136 调用 · 116 成功 · 20 失败 · 85%"><div class="slot"><i style="height:100%"><b class="r" style="flex-grow:20"></b><b class="g" style="flex-grow:116"></b></i></div><span>10</span></div>
+      <div class="hr" title="11:00 · 37 调用 · 28 成功 · 9 失败 · 76%"><div class="slot"><i style="height:27%"><b class="r" style="flex-grow:9"></b><b class="g" style="flex-grow:28"></b></i></div><span>11</span></div>
+      <div class="hr off" title="12:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>12</span></div>
+      <div class="hr" title="13:00 · 60 调用 · 50 成功 · 10 失败 · 83%"><div class="slot"><i style="height:44%"><b class="r" style="flex-grow:10"></b><b class="g" style="flex-grow:50"></b></i></div><span>13</span></div>
+      <div class="hr off" title="14:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>14</span></div>
+      <div class="hr off" title="15:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>15</span></div>
+      <div class="hr off" title="16:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>16</span></div>
+      <div class="hr off" title="17:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>17</span></div>
+      <div class="hr off" title="18:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>18</span></div>
+      <div class="hr off" title="19:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>19</span></div>
+      <div class="hr off" title="20:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>20</span></div>
+      <div class="hr off" title="21:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>21</span></div>
+      <div class="hr off" title="22:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>22</span></div>
+      <div class="hr off" title="23:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>23</span></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><h2>请求明细</h2><span>430 总请求数</span></div>
+    <!-- 这组成败筛选保留：该厂商确实有成有败，点了会变 -->
+    <div class="bar">
+      <div class="grp"><span class="chip on">全部</span><span class="chip">成功</span><span class="chip">失败</span></div>
+      <input class="search" placeholder="搜索模型 / 错误码">
+    </div>
+    <div class="tw">
+      <table>
+        <thead><tr>
+          <th style="width:84px">时间</th><th>模型</th><th class="r" style="width:92px">token</th>
+          <th class="r" style="width:80px">耗时</th><th class="r" style="width:76px">首字</th>
+          <th style="width:130px">状态</th><th class="r" style="width:72px">会话</th>
+        </tr></thead>
+        <tbody>
+          <tr><td class="mono mut">13:20:41</td><td style="color:var(--tx)">qfmodel</td><td class="r mono">21.0K</td><td class="r mono mut">5.6s</td><td class="r mono mut">1.5s</td><td class="ok">成功</td><td class="r mono" style="color:var(--acc)">428ef422</td></tr>
+          <tr><td class="mono mut">13:19:02</td><td style="color:var(--tx)">qfmodel</td><td class="r mono">252.0K</td><td class="r mono mut">1m 24s</td><td class="r mono mut">29.3s</td><td class="ok">成功</td><td class="r mono" style="color:var(--acc)">b3822b95</td></tr>
+          <tr><td class="mono mut">13:17:55</td><td style="color:var(--tx)">qfmodel</td><td class="r mono">324.0K</td><td class="r mono mut">37.5s</td><td class="r mono mut">34.7s</td><td class="ok">成功</td><td class="r mono" style="color:var(--acc)">428ef422</td></tr>
+          <tr><td class="mono mut">13:15:30</td><td style="color:var(--tx)">qfmodel</td><td class="r mono dim">—</td><td class="r mono mut">12.1s</td><td class="r mono dim">—</td><td class="mono bad">TRANSPORT</td><td class="r mono" style="color:var(--acc)">95373143</td></tr>
+          <tr><td class="mono mut">13:12:08</td><td style="color:var(--tx)">qfmodel</td><td class="r mono">88.0K</td><td class="r mono mut">22.4s</td><td class="r mono mut">3.1s</td><td class="ok">成功</td><td class="r mono" style="color:var(--acc)">efc8e254</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pager"><button disabled>‹ 上一页</button><span>1 / 18</span><button>下一页 ›</button><span style="opacity:.75">显示 1–25 / 430</span></div>
   </div>
 </div>
 

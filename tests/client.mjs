@@ -1356,20 +1356,39 @@ console.log('\n== 用量展示与排序 ==');
           ...Array.from({ length: 11 }, () => mk(9, true)),
           ...Array.from({ length: 9 }, () => mk(11, false)),
         ])) === null);
-      // 噪声护栏三：三个时段几乎持平（qfmodel 的真实情形是 86/83/83）不算时段效应。
-      check('时段差距过小不给结论',
+      // 噪声护栏三：三个时段几乎持平不算时段效应。但**不能返回 null** ——
+      // null 的含义是「样本不足」，而这里有好几百次调用，是够样本的平局。
+      // 界面必须说「各时段接近」而不是「样本不足」，否则是把结论说成了没数据。
+      const flat = hourExtremes(summarizeUsageByHour([
+        ...Array.from({ length: 40 }, () => mk(8, true)),
+        ...Array.from({ length: 40 }, (_, i) => mk(9, i > 1)),
+        ...Array.from({ length: 40 }, (_, i) => mk(10, i > 1)),
+      ]));
+      check('差距过小标记为无意义而不是无数据', flat !== null && flat.meaningful === false,
+        JSON.stringify(flat && { meaningful: flat.meaningful, sample: flat.sample }));
+      check('差距达到 20 个百分点时标记为有意义',
         hourExtremes(summarizeUsageByHour([
           ...Array.from({ length: 40 }, () => mk(8, true)),
-          ...Array.from({ length: 40 }, (_, i) => mk(9, i > 1)),
-          ...Array.from({ length: 40 }, (_, i) => mk(10, i > 1)),
-        ])) === null);
-      check('差距达到 10% 以上才给结论',
+          ...Array.from({ length: 40 }, (_, i) => mk(15, i < 28)),
+        ]))?.meaningful === true);
+      // 真实反例：dsh-provider-qoder 各时段 86% / 83% / 76%，最大差 10 个百分点。
+      // 旧阈值会打出「最好时段 08:00 · 最差时段 11:00」，用户据此调整工作时段毫无意义。
+      check('10 个百分点的波动不报为时段结论',
         hourExtremes(summarizeUsageByHour([
-          ...Array.from({ length: 40 }, () => mk(8, true)),
-          ...Array.from({ length: 40 }, (_, i) => mk(15, i < 34)),
-        ])) !== null);
+          ...Array.from({ length: 65 }, (_, i) => mk(8, i < 56)),
+          ...Array.from({ length: 132 }, (_, i) => mk(9, i < 110)),
+          ...Array.from({ length: 20 }, (_, i) => mk(11, i < 15)),
+        ]))?.meaningful === false);
+      check('够样本的平局不误报为样本不足',
+        hourExtremes(summarizeUsageByHour([
+          ...Array.from({ length: 65 }, (_, i) => mk(8, i < 56)),
+          ...Array.from({ length: 132 }, (_, i) => mk(9, i < 110)),
+        ]))?.sample >= 100);
     }
     check('分时视图已挂在第二层', page.includes('usageL2Hours') && page.includes('summarizeUsageByHour(providerRows)'));
+    // 三种话必须分开说：没数据 / 有数据但平局 / 真的有时段效应
+    check('分时结论区分无数据与平局',
+      page.includes('usageHoursInsufficient') && page.includes('usageHoursFlat') && page.includes('hourRange.meaningful'));
     check('分时柱形按成功/失败堆叠', page.includes('flexGrow: b.failed') && page.includes('flexGrow: b.ok'));
 
     // ── 交互回归（用户报告「点击按钮没有反应」）──────────────────
@@ -1501,6 +1520,41 @@ console.log('\n== 用量展示与排序 ==');
       new Map([[0, { ...bigSnap, recent: manyRows.slice(0, 10) }], [2, false], [3, 'alpha']]),
       () => UsageDetailPage({ rpc: null, onClose: undefined }));
     check('不足一页时不显示分页', walk(smallTree, n => n.type === 'button' && typeof n.props?.disabled === 'boolean').length === 0);
+
+    // ── 只有一个厂商/模型时，点不出变化的控件必须消失 ──────────────
+    // 用户实测：进到 dsh-provider-qoder（只有 qfmodel 一个模型）后
+    // 「按调用、按 token 点了没变化，感觉没啥用」。
+    const oneModel = Array.from({ length: 30 }, (_, i) => ({
+      provider: 'solo', model: 'only-one', ok: i % 4 !== 0, durationMs: 900 + i,
+      usageReported: true, inputTokens: 20, outputTokens: 5,
+      startedAt: t0 + i * 1000, timezoneOffsetMinutes: -480, requestId: `s${i}`,
+      sessionId: 'session-428ef4ab99',
+      ...(i % 4 !== 0 ? {} : { error: { code: 'RATE_LIMIT' } }),
+    }));
+    const soloTree = modules.react.__withState(
+      new Map([[0, { schemaVersion: 2, status: { recordCount: 30 }, recent: oneModel }], [2, false], [3, 'solo']]),
+      () => UsageDetailPage({ rpc: null, onClose: undefined }));
+    const soloJson = JSON.stringify(soloTree);
+    check('单模型时不渲染排序按钮', !soloJson.includes('usageSortTokens') && !soloJson.includes('usageSortFailures'),
+      `sorts=${(soloJson.match(/usageSort/g) ?? []).length}`);
+    check('单模型时不渲染展开下拉', walk(soloTree, n => n.type === 'select').length === 0);
+    check('单模型时不渲染有失败/全成功筛选',
+      !soloJson.includes('usageFilterHasFailures') && !soloJson.includes('usageFilterAllOk'));
+    check('单模型仍然正常显示模型卡片', walk(soloTree, n => n.props?.role === 'button').length >= 1);
+    // 明细的成败筛选按未筛选行判断：全为同一结果时没有可筛的东西
+    const allOk = modules.react.__withState(
+      new Map([[0, { schemaVersion: 2, status: { recordCount: 5 }, recent: oneModel.map(r => ({ ...r, ok: true, error: undefined })) }], [2, false], [3, 'solo']]),
+      () => UsageDetailPage({ rpc: null, onClose: undefined }));
+    check('全部成功时不渲染成败筛选', !JSON.stringify(allOk).includes('usageFilterFailed'));
+
+    // 会话列：id 形如 session-428ef4ab99，截前 8 位永远是常量 "session-"。
+    // 注意 children 是数组，直接 JSON.stringify 得到的是 ["xxx"]；
+    // 上一版拿 "session-"（带引号）去比，因为永远不相等而「假通过」。
+    const cells = walk(soloTree, n => n.type === 'td').map(n => (n.children ?? []).map(String).join(''));
+    check('会话列不再显示常量前缀', !cells.includes('session-'),
+      cells.filter(x => x.startsWith('session')).slice(0, 2).join(' '));
+    check('会话列显示出去掉前缀的 id', cells.includes('428ef4ab'),
+      `cells=${cells.slice(-3).join(',')}`);
     check('warn 色有主题 token 与兜底值', /warn:\s*'var\(--dsw-alias-state-warning-primary,\s*#d9a441\)'/
       .test(src));
 

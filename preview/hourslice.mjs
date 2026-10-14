@@ -24,13 +24,17 @@ for (const b of buckets) {
   console.log(`${String(b.hour).padStart(2, '0')}   ${String(b.calls).padStart(4)} ${String(b.ok).padStart(4)} ${String(b.failed).padStart(4)} ${String(rate ?? '-').padStart(5)} ${String(h).padStart(5)}% ${String(okPct).padStart(5)}% ${String(100 - okPct).padStart(6)}%   ${'<i style="height:' + h + '%"><b class="r" style="flex-grow:' + b.failed + '"></b><b class="g" style="flex-grow:' + b.ok + '"></b></i>'}${flag}`);
 }
 
-// 结论行：与 hourExtremes 同规则（>=20 且差距 >=10 个百分点）
+// 结论行：必须复刻 client.js 里 hourExtremes 的规则
+// （单桶 >=20 次、最好/最差差距 >=20 个百分点才算有时段效应）。
+// 阈值改过一次（10 → 20），脚本若不同步就会给出与应用相反的结论。
 const usable = buckets.filter(b => b.calls >= 20);
 if (usable.length >= 2) {
-  const sorted = usable.slice().sort((a, b) => a.ok / a.calls - b.ok / b.calls);
-  const worst = sorted[0], best = sorted[sorted.length - 1];
+  const s = usable.slice().sort((a, b) => (a.ok / a.calls) - (b.ok / b.calls));
+  const worst = s[0], best = s[s.length - 1];
   const gap = Math.round((best.ok / best.calls - worst.ok / worst.calls) * 100);
-  console.log(`\n结论：${gap >= 10 ? '显示' : '不显示（差距仅 ' + gap + '%）'}  最好 ${String(best.hour).padStart(2, '0')}:00 ${Math.round(best.ok / best.calls * 100)}% · 最差 ${String(worst.hour).padStart(2, '0')}:00 ${Math.round(worst.ok / worst.calls * 100)}%  (gap ${gap}%)`);
+  const fmtH = b => `${String(b.hour).padStart(2, '0')}:00 ${Math.round(b.ok / b.calls * 100)}%`;
+  console.log(`\n达标时段 ${usable.length} 个（>=20 次）`);
+  console.log(`结论：${gap >= 20 ? '显示' : '不显示（差距仅 ' + gap + '%，属波动）'}  最好 ${fmtH(best)} · 最差 ${fmtH(worst)}  (gap ${gap}%)`);
 } else {
-  console.log(`\n结论：不显示（达标时段不足 ${usable.length} 个）`);
+  console.log(`\n结论：不显示（达标时段仅 ${usable.length} 个，样本不足）`);
 }

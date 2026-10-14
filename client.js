@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.9';
+    const VERSION = '0.6.0-alpha.11';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -167,6 +167,9 @@ window.__ModuleLoader__.load({
         usageL1Title: '按厂商',
         usageL1Hint: '点任意厂商下钻到其模型',
         usageL2Models: '该厂商下的模型',
+        // 此前这里复用了 L1 的提示「点任意厂商下钻到其模型」，
+        // 可这一层已经在某个厂商内部了，文案自相矛盾。
+        usageL2ModelsHint: '点任意模型展开细节',
         usageL2Rows: '请求明细',
         usageL2Timeline: '时间线',
         usageBackToProviders: '‹ 全部厂商',
@@ -189,6 +192,7 @@ window.__ModuleLoader__.load({
         usageBestHour: '最好时段',
         usageWorstHour: '最差时段',
         usageHoursInsufficient: '样本不足，暂不判断时段差异',
+        usageHoursFlat: '各时段成功率接近，未见时段效应',
         usageHourCalls: '{count} 次',
         // 下拉检索：厂商/模型是有限集合，从列表里直接点选比敲关键字快，
         // 也不受「排序恰好同序时看不出按钮有没有生效」的影响。
@@ -320,6 +324,7 @@ window.__ModuleLoader__.load({
         usageL1Title: 'By provider',
         usageL1Hint: 'Pick a provider to drill into its models',
         usageL2Models: 'Models in this provider',
+        usageL2ModelsHint: 'Pick a model to expand its details',
         usageL2Rows: 'Request rows',
         usageL2Timeline: 'Timeline',
         usageBackToProviders: '‹ All providers',
@@ -342,6 +347,7 @@ window.__ModuleLoader__.load({
         usageBestHour: 'best hour',
         usageWorstHour: 'worst hour',
         usageHoursInsufficient: 'Too few samples to judge hour-to-hour differences',
+        usageHoursFlat: 'Success rates are close across hours — no hour effect',
         usageHourCalls: '{count} calls',
         usagePickProvider: 'Pick a provider…',
         usagePickModel: 'Expand a model…',
@@ -3415,9 +3421,18 @@ window.__ModuleLoader__.load({
       if (usable.length < 2) return null;
       const byRate = usable.slice().sort((a, b) => a.successRate - b.successRate);
       const worst = byRate[0]; const best = byRate[byRate.length - 1];
-      // 差距太小也不给结论：qfmodel 三个时段 86/83/83，说「最好时段」是自欺。
-      if (best.successRate - worst.successRate < 0.1) return null;
-      return { worst, best, sample: usable.reduce((s, b) => s + b.calls, 0) };
+      // 差距阈值 20 个百分点而不是 10：真实数据里 dsh-provider-qoder 各时段是
+      // 86% / 83% / 76%，按 10 会打出「最好时段 08:00 · 最差时段 11:00」这种
+      // 看着像结论其实是波动的话，用户据此换工作时段毫无意义。
+      //
+      // 但这里不能直接 return null —— 界面会把「差距不显著」误报成
+      // 「样本不足」，而它其实有 200 多次调用，是够样本的平局。
+      // 所以返回 meaningful 标志，让界面分两种话说。
+      return {
+        worst, best,
+        sample: usable.reduce((s, b) => s + b.calls, 0),
+        meaningful: best.successRate - worst.successRate >= 0.2,
+      };
     }
 
     // 账本把 token 分桶存（inputTokens/outputTokens/cacheReadTokens），
@@ -3716,7 +3731,7 @@ window.__ModuleLoader__.load({
         const head = React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
           React.createElement('button', {
             type: 'button',
-            onClick: () => { setProvider(null); setExpanded(new Set()); setRowQuery(''); setDetailPage(0); setTimelinePage(0); },
+            onClick: () => { setProvider(null); setExpanded(new Set()); setRowQuery(''); setDetailPage(0); setTimelinePage(0); setFailFilter('all'); setStatusFilter('all'); },
             style: { border: `1px solid ${colors.border}`, background: 'transparent', color: colors.accent, cursor: 'pointer', fontSize: '12px', padding: '4px 11px', borderRadius: '999px', whiteSpace: 'nowrap' },
           }, t('usageBackToProviders')),
           React.createElement('span', { style: { fontSize: '15px', fontWeight: 700, color: colors.text } }, String(provider)),
@@ -3736,15 +3751,27 @@ window.__ModuleLoader__.load({
         // 每段抽成具名构件、返回数组。段的先后顺序会被反复调整（这次就要把分时
         // 移到明细上面），内联成一串兄弟节点时挪一段就得整块剪切，极易挪坏。
         // 现在改顺序只动下面那个 SECTIONS 数组。
+        // 控件只在「点了确实会变」时才渲染。该厂商只有一个模型时，排序按钮、
+        // 展开下拉、有失败/全成功筛选全都点不出任何变化（用户实测反馈：
+        // 「按调用啥的没有变化，感觉没啥用」）——留着只会让界面看起来是坏的。
+        const manyModels = l2.length >= 2;
+        const mixedFail = l2.some(e => e.failed > 0) && l2.some(e => e.failed === 0);
         const modelsSection = () => [
-          sectionTitle(t('usageL2Models'), t('usageL1Hint')),
-          toolbar(sortChips(),
-            React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
-              [['all', t('usageFilterAll')], ['hasFailures', t('usageFilterHasFailures')], ['allOk', t('usageFilterAllOk')]]
-                .map(([id, label]) => chip(id, label, failFilter === id, setFailFilter)),
-              picker(t('usagePickModel'),
-                l2.map(e => ({ value: e.key, label: pickLabel(e.model, e) })),
-                (v) => setExpanded(new Set([v]))))),
+          sectionTitle(t('usageL2Models'), manyModels ? t('usageL2ModelsHint') : null),
+          (manyModels || mixedFail)
+            ? toolbar(
+              manyModels ? sortChips() : null,
+              React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
+                ...(mixedFail
+                  ? [['all', t('usageFilterAll')], ['hasFailures', t('usageFilterHasFailures')], ['allOk', t('usageFilterAllOk')]]
+                      .map(([id, label]) => chip(id, label, failFilter === id, setFailFilter))
+                  : []),
+                manyModels
+                  ? picker(t('usagePickModel'),
+                    l2.map(e => ({ value: e.key, label: pickLabel(e.model, e) })),
+                    (v) => setExpanded(new Set([v])))
+                  : null))
+            : null,
           l2.length === 0
             ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px', padding: '14px 0' } }, t('usageNoMatch'))
             : listShell(l2.map(e => cardRow(e, {
@@ -3759,12 +3786,14 @@ window.__ModuleLoader__.load({
         // 分时。做这一版的直接动因：真实账本里同一厂商的成功率随时段剧烈波动，
         // 部分网关按时段限流或计价，不看钟点就会在错的时段硬撞。
         const hoursSection = () => [
-          sectionTitle(t('usageL2Hours'), hourRange
-            ? [
-              `${t('usageBestHour')} ${String(hourRange.best.hour).padStart(2, '0')}:00 ${Math.round(hourRange.best.successRate * 100)}%`,
-              `${t('usageWorstHour')} ${String(hourRange.worst.hour).padStart(2, '0')}:00 ${Math.round(hourRange.worst.successRate * 100)}%`,
-            ].join('  ·  ')
-            : t('usageHoursInsufficient')),
+          sectionTitle(t('usageL2Hours'), !hourRange
+            ? t('usageHoursInsufficient')
+            : hourRange.meaningful
+              ? [
+                `${t('usageBestHour')} ${String(hourRange.best.hour).padStart(2, '0')}:00 ${Math.round(hourRange.best.successRate * 100)}%`,
+                `${t('usageWorstHour')} ${String(hourRange.worst.hour).padStart(2, '0')}:00 ${Math.round(hourRange.worst.successRate * 100)}%`,
+              ].join('  ·  ')
+              : `${t('usageHoursFlat')}（${Math.round(hourRange.worst.successRate * 100)}%–${Math.round(hourRange.best.successRate * 100)}%）`),
           React.createElement('div', {
             style: { display: 'flex', gap: '3px', padding: '10px 10px 7px', border: `1px solid ${colors.border}`, borderRadius: '10px', background: colors.panel },
           }, ...hours.map((b) => {
@@ -3801,14 +3830,19 @@ window.__ModuleLoader__.load({
 
         // 明细（分页）
         const detailWin = windowOf(detailRows, detailPage);
+        // 判据用未筛选的 providerRows：若用筛选后的行，一旦点了「失败」
+        // 就只剩失败行，那组按钮会因为自己的生效而消失，再点不回来。
+        const mixedRows = providerRows.some(r => r.ok === true) && providerRows.some(r => r.ok !== true);
         const rowsSection = () => [
           sectionTitle(t('usageL2Rows'), `${detailRows.length} ${t('usageKpiRequests')}`),
           toolbar(
-            React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 'none' } },
-              [['all', t('usageFilterAll')], ['ok', t('usageFilterOk')], ['failed', t('usageFilterFailed')]]
-                .map(([id, label]) => chip(id, label, statusFilter === id, (v) => {
-                  setStatusFilter(v); setDetailPage(0); setTimelinePage(0);
-                }))),
+            mixedRows
+              ? React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 'none' } },
+                  [['all', t('usageFilterAll')], ['ok', t('usageFilterOk')], ['failed', t('usageFilterFailed')]]
+                    .map(([id, label]) => chip(id, label, statusFilter === id, (v) => {
+                      setStatusFilter(v); setDetailPage(0); setTimelinePage(0);
+                    })))
+              : null,
             searchBox(t('usageSearchModel'))),
           detailWin.rows.length === 0
             ? React.createElement('div', { style: { color: colors.muted, fontSize: '13px', padding: '10px 0' } }, t('usageNoMatch'))
@@ -3831,7 +3865,9 @@ window.__ModuleLoader__.load({
                   td(row.ok ? t('usageOk') : (row.error?.code ?? t('usageFailed')),
                     { color: row.ok ? colors.ok : colors.danger, maxWidth: 'none', ...mono },
                     row.ok ? t('usageOk') : String(row.error?.code ?? t('usageFailed'))),
-                  td(row.sessionId ? String(row.sessionId).slice(0, 8) : '—', { textAlign: 'right', ...mono }, row.sessionId ?? undefined),
+                  // 会话 id 形如 session-428ef4…，直接 slice(0,8) 截出来永远是
+                  // 常量 "session-"（实测那一列全是同一个词，等于没显示）。
+                  td(row.sessionId ? String(row.sessionId).replace(/^session-/, '').slice(0, 8) : '—', { textAlign: 'right', ...mono }, row.sessionId ?? undefined),
                 );
               }),
             ),
@@ -3900,11 +3936,14 @@ window.__ModuleLoader__.load({
                 allRows.length === 0 ? t('usageEmpty') : t('usageNoMatch'))
               : React.createElement(React.Fragment, null,
                 sectionTitle(t('usageL1Title'), t('usageL1Hint')),
-                toolbar(sortChips(),
-                  React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
-                    picker(t('usagePickProvider'),
-                      l1.map(e => ({ value: e.provider, label: pickLabel(e.provider, e) })),
-                      (v) => { setProvider(v); setExpanded(new Set()); setRowQuery(''); setDetailPage(0); setTimelinePage(0); }))),
+                // 只有一个厂商时排序与下拉都点不出变化，同 L2 一并隐藏。
+                l1.length >= 2
+                  ? toolbar(sortChips(),
+                      React.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', flex: '1 1 260px', justifyContent: 'flex-end' } },
+                        picker(t('usagePickProvider'),
+                          l1.map(e => ({ value: e.provider, label: pickLabel(e.provider, e) })),
+                          (v) => { setProvider(v); setExpanded(new Set()); setRowQuery(''); setDetailPage(0); setTimelinePage(0); setFailFilter('all'); setStatusFilter('all'); })))
+                  : null,
                 listShell(l1.map(e => cardRow(e, {
                   max: l1Max,
                   leading: e.provider,
@@ -3912,7 +3951,7 @@ window.__ModuleLoader__.load({
                     style: { flex: 'none', fontSize: '10.5px', padding: '1px 8px', borderRadius: '999px', background: colors.panel2, color: colors.muted, whiteSpace: 'nowrap' },
                   }, `${e.models.length} ${t('usageModelCountLabel')}`),
                   isOpen: false,
-                  onOpen: () => { setProvider(e.provider); setExpanded(new Set()); setRowQuery(''); setDetailPage(0); setTimelinePage(0); },
+                  onOpen: () => { setProvider(e.provider); setExpanded(new Set()); setRowQuery(''); setDetailPage(0); setTimelinePage(0); setFailFilter('all'); setStatusFilter('all'); },
                 })))),
       );
     });

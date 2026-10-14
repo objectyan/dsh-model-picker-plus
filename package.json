@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-picker-plus",
-  "version": "0.6.0-alpha.9",
+  "version": "0.6.0-alpha.11",
   "description": "A grouped, searchable replacement for the DSH composer model selector.",
   "type": "module",
   "repository": {
