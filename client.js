@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.5';
+    const VERSION = '0.6.0-alpha.6';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -3489,13 +3489,19 @@ window.__ModuleLoader__.load({
         e.tokenReported > 0 ? (formatTokens(e.tokens) || '—') : '—',
         formatDuration(e.durationMs) || '—',
       ].join('  ·  ')),
-      // ③ 占比条放到整幅宽度上，读作「占本层流量多少」；颜色即成功率。
-      //    原先它是 84px 挤在数字中间，既不显眼也和数字抢位置。
+      // ③ 占比条：长度 = 占本层流量比例，条内按成功/失败分段。
+      //    上一版整条按成功率上色，于是这根条同时被读成「流量」和「健康度」，
+      //    而且颜色与右侧百分比同义反复（长红条到底是失败多还是量大？说不清）。
+      //    分段后红色只出现在它真正指代的地方：失败的那部分请求。
       React.createElement('div', {
+        title: `${e.calls} ${t('usageColCount')} · ${e.ok} ${t('usageOk')} · ${e.failed} ${t('usageColFailures')}`,
         style: { height: '4px', marginTop: '9px', marginLeft: '20px', background: colors.panel2, borderRadius: '2px', overflow: 'hidden' },
       }, React.createElement('div', {
-        style: { height: '100%', width: `${Math.max(2, Math.round((e.calls / max) * 100))}%`, background: rateColor(e.successRate), borderRadius: '2px' },
-      })),
+        style: { display: 'flex', height: '100%', borderRadius: '2px', overflow: 'hidden', width: `${Math.max(2, Math.round((e.calls / max) * 100))}%` },
+      },
+        React.createElement('div', { style: { height: '100%', background: colors.ok, width: `${e.calls > 0 ? Math.round((e.ok / e.calls) * 100) : 0}%` } }),
+        React.createElement('div', { style: { height: '100%', background: colors.danger, width: `${e.calls > 0 ? Math.round((e.failed / e.calls) * 100) : 0}%` } }),
+      )),
       isOpen
         ? React.createElement('div', {
           style: { display: 'flex', gap: '18px', flexWrap: 'wrap', padding: '10px 14px 2px 20px', marginTop: '9px', borderTop: `1px dashed ${colors.border}`, fontSize: '11.5px', color: colors.muted },

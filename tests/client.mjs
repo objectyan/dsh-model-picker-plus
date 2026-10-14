@@ -1290,6 +1290,14 @@ console.log('\n== 用量展示与排序 ==');
     check('下钻层可返回厂商列表', page.includes('usageBackToProviders') && page.includes('setProvider(null)'));
     check('下钻层数据限定在该厂商内', page.includes('r.provider === provider'));
     check('成功率三档色阶齐备', page.includes('colors.ok : ') && page.includes('colors.warn : colors.danger'));
+    // 占比条必须分段（成功绿 / 失败红），不能退回整条按成功率上色：
+    // 那样一根条同时表示「流量占比」和「健康度」，且与右侧百分比同义反复，
+    // 用户实测就问过「为啥只有红色」。
+    check('占比条按成功/失败分段',
+      page.includes('background: colors.ok, width:') && page.includes('background: colors.danger, width:'));
+    check('占比条不再整体按成功率着色',
+      !page.includes('background: rateColor(e.successRate), borderRadius'));
+    check('分段比例按 calls 为 0 时不除零', page.includes('e.calls > 0 ? Math.round((e.ok / e.calls)'));
     check('warn 色有主题 token 与兜底值', /warn:\s*'var\(--dsw-alias-state-warning-primary,\s*#d9a441\)'/
       .test(src));
 
