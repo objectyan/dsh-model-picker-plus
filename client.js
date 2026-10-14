@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.4';
+    const VERSION = '0.6.0-alpha.5';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -3465,7 +3465,7 @@ window.__ModuleLoader__.load({
           background: isOpen ? tint(colors.accent, 6) : 'transparent',
         },
       },
-      // ① 身份 + 两个头条数字（调用数、成功率）。数值列用固定宽度右对齐，
+      // ① 身份 + 头条数字（成功数、失败数、成功率）。数值列固定宽度右对齐，
       //    这样八张卡片的数字排在同一条竖线上。
       React.createElement('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', whiteSpace: 'nowrap' } },
         React.createElement('span', { style: { width: '10px', flex: 'none', color: colors.muted, fontSize: '9px' } }, isOpen ? '▾' : '▸'),
@@ -3474,17 +3474,20 @@ window.__ModuleLoader__.load({
           style: { flex: '1 1 auto', minWidth: 0, fontSize: '13.5px', fontWeight: 650, color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis' },
         }, leading),
         badge,
-        stat(String(e.calls), { flex: 'none', width: '54px', color: colors.text }),
+        // 成功数绿 / 失败数红，取代原先那个中性的总次数：总数不说明健康度，
+        // 拆开后一眼看出是谁在报错。0 失败用灰不用红——满屏红「✕0」反而像出事了。
+        stat(`✓${e.ok}`, { flex: 'none', width: '58px', color: colors.ok }),
+        stat(`✕${e.failed}`, { flex: 'none', width: '54px', color: e.failed > 0 ? colors.danger : colors.muted }),
         stat(`${Math.round(e.successRate * 100)}%`, { flex: 'none', width: '44px', color: rateColor(e.successRate), fontWeight: 600 }),
       ),
       // ② 次要指标压成一行小灰字，不再各自占一格抢横向空间
       React.createElement('div', {
-        title: `${t('usageKpiTokens')} ${e.tokenReported > 0 ? (formatTokens(e.tokens) || '—') : '—'} · ${t('usageKpiDuration')} ${formatDuration(e.durationMs) || '—'} · ${e.failed} ${t('usageColFailures')}`,
+        title: `${t('usageColCount')} ${e.calls} · ${t('usageKpiTokens')} ${e.tokenReported > 0 ? (formatTokens(e.tokens) || '—') : '—'} · ${t('usageKpiDuration')} ${formatDuration(e.durationMs) || '—'}`,
         style: { ...mono, marginTop: '5px', paddingLeft: '20px', fontSize: '11px', color: colors.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
       }, [
+        `${e.calls} ${t('usageColCount')}`,
         e.tokenReported > 0 ? (formatTokens(e.tokens) || '—') : '—',
         formatDuration(e.durationMs) || '—',
-        `${e.failed} ${t('usageColFailures')}`,
       ].join('  ·  ')),
       // ③ 占比条放到整幅宽度上，读作「占本层流量多少」；颜色即成功率。
       //    原先它是 84px 挤在数字中间，既不显眼也和数字抢位置。
