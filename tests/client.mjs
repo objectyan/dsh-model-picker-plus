@@ -1298,6 +1298,75 @@ console.log('\n== 用量展示与排序 ==');
     check('占比条不再整体按成功率着色',
       !page.includes('background: rateColor(e.successRate), borderRadius'));
     check('分段比例按 calls 为 0 时不除零', page.includes('e.calls > 0 ? Math.round((e.ok / e.calls)'));
+
+    // ── 分时统计 ──────────────────────────────────────────────
+    const { summarizeUsageByHour, localHourOf, hourExtremes } = plugin.__test;
+    check('分时聚合已导出', typeof summarizeUsageByHour === 'function' && typeof localHourOf === 'function');
+    if (typeof localHourOf === 'function') {
+      const at = Date.UTC(2026, 9, 14, 2, 0, 0); // 2026-10-14T02:00:00Z
+      // 关键正确性：钟点取**该行自带的**时区偏移，而不是读取时的机器时区。
+      // 否则同一份账本在别的时区机器上会整体错位，且跨夏令时不自洽。
+      check('钟点用记录自带的时区偏移', localHourOf({ startedAt: at, timezoneOffsetMinutes: -480 }) === 10,
+        String(localHourOf({ startedAt: at, timezoneOffsetMinutes: -480 })));
+      check('同一时刻不同偏移得到不同钟点',
+        localHourOf({ startedAt: at, timezoneOffsetMinutes: 0 }) === 2
+        // 偏移为负＝本地在 UTC 东边，钟点更晚（UTC+2 → 04:00）。
+        && localHourOf({ startedAt: at, timezoneOffsetMinutes: -120 }) === 4
+        // 偏移为正＝西边，钟点更早（UTC-2 → 00:00）。
+        && localHourOf({ startedAt: at, timezoneOffsetMinutes: 120 }) === 0,
+        String([0, -120, 120].map(o => localHourOf({ startedAt: at, timezoneOffsetMinutes: o }))));
+      check('缺偏移时退回机器时区（不丢样本）',
+        Number.isInteger(localHourOf({ startedAt: at })));
+      check('缺 startedAt 返回 null 而不是 NaN', localHourOf({ timezoneOffsetMinutes: -480 }) === null);
+    }
+    if (typeof summarizeUsageByHour === 'function') {
+      const mk = (h, ok, off = -480) => ({
+        startedAt: Date.UTC(2026, 9, 14, (h - 8 + 24) % 24, 0, 0), timezoneOffsetMinutes: off, ok, durationMs: 1000,
+      });
+      const buckets = summarizeUsageByHour([mk(9, true), mk(9, true), mk(9, false), mk(23, false)]);
+      check('分时固定 24 桶', buckets.length === 24);
+      check('分时空桶是 null 而不是 0%',
+        buckets[3].calls === 0 && buckets[3].successRate === null,
+        `rate=${buckets[3]?.successRate}`);
+      check('分时按本地钟点归桶', buckets[9].calls === 3 && buckets[23].calls === 1,
+        `h9=${buckets[9]?.calls} h23=${buckets[23]?.calls}`);
+      check('分时成功+失败=总数', buckets.every(b => b.ok + b.failed === b.calls));
+      check('分时成功率只算有样本的桶', Math.abs(buckets[9].successRate - 2 / 3) < 0.01);
+      check('分时跳过非对象行', summarizeUsageByHour([null, 5, undefined]).every(b => b.calls === 0));
+      check('分时对空输入返回 24 空桶', summarizeUsageByHour(null).length === 24);
+
+      const many = summarizeUsageByHour([
+        ...Array.from({ length: 20 }, () => mk(8, true)),
+        ...Array.from({ length: 20 }, () => mk(2, false)),
+      ]);
+      const ex = hourExtremes(many);
+      check('时段结论给出最好与最差', ex && ex.best.hour === 8 && ex.worst.hour === 2,
+        JSON.stringify(ex && { best: ex.best.hour, worst: ex.worst.hour }));
+      // 噪声护栏一：某小时只有 1 次调用且恰好失败，不能就被当成「最差时段」
+      const thin = summarizeUsageByHour([mk(5, false), ...Array.from({ length: 20 }, () => mk(8, true))]);
+      check('样本不足时不给时段结论', hourExtremes(thin) === null);
+      // 噪声护栏二：门槛必须是 20 而不是 10。真实账本里 space-bunny-free
+      // 的 11:00 只有 9 次全败、09:00 只有 11 次全胜，按 10 会报出「时段差 100%」。
+      check('11 次对 9 次这种小样本不给结论',
+        hourExtremes(summarizeUsageByHour([
+          ...Array.from({ length: 11 }, () => mk(9, true)),
+          ...Array.from({ length: 9 }, () => mk(11, false)),
+        ])) === null);
+      // 噪声护栏三：三个时段几乎持平（qfmodel 的真实情形是 86/83/83）不算时段效应。
+      check('时段差距过小不给结论',
+        hourExtremes(summarizeUsageByHour([
+          ...Array.from({ length: 40 }, () => mk(8, true)),
+          ...Array.from({ length: 40 }, (_, i) => mk(9, i > 1)),
+          ...Array.from({ length: 40 }, (_, i) => mk(10, i > 1)),
+        ])) === null);
+      check('差距达到 10% 以上才给结论',
+        hourExtremes(summarizeUsageByHour([
+          ...Array.from({ length: 40 }, () => mk(8, true)),
+          ...Array.from({ length: 40 }, (_, i) => mk(15, i < 34)),
+        ])) !== null);
+    }
+    check('分时视图已挂在第二层', page.includes('usageL2Hours') && page.includes('summarizeUsageByHour(providerRows)'));
+    check('分时柱形按成功/失败堆叠', page.includes('flexGrow: b.failed') && page.includes('flexGrow: b.ok'));
     check('warn 色有主题 token 与兜底值', /warn:\s*'var\(--dsw-alias-state-warning-primary,\s*#d9a441\)'/
       .test(src));
 

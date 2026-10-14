@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.6';
+    const VERSION = '0.6.0-alpha.7';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -183,6 +183,13 @@ window.__ModuleLoader__.load({
         usageFilterHasFailures: '有失败',
         usageFilterAllOk: '全成功',
         usageNoErrors: '无失败',
+        // 分时统计（部分网关按时段限流/计价）
+        usageL2Hours: '分时',
+        usageHoursHint: '按请求发生时的本地钟点 · 柱高＝调用数 · 绿＝成功 红＝失败',
+        usageBestHour: '最好时段',
+        usageWorstHour: '最差时段',
+        usageHoursInsufficient: '样本不足，暂不判断时段差异',
+        usageHourCalls: '{count} 次',
         providers: '全部来源',
         noResults: '没有匹配的模型',
         retry: '重试',
@@ -322,6 +329,13 @@ window.__ModuleLoader__.load({
         usageFilterHasFailures: 'with failures',
         usageFilterAllOk: 'all ok',
         usageNoErrors: 'no failures',
+        // Hour-of-day view (some gateways throttle or reprice by hour)
+        usageL2Hours: 'By hour',
+        usageHoursHint: 'Local hour of each request · bar height = calls · green ok / red failed',
+        usageBestHour: 'best hour',
+        usageWorstHour: 'worst hour',
+        usageHoursInsufficient: 'Too few samples to judge hour-to-hour differences',
+        usageHourCalls: '{count} calls',
         providers: 'All providers',
         noResults: 'No matching models',
         retry: 'Retry',
@@ -3345,6 +3359,55 @@ window.__ModuleLoader__.load({
       return list;
     }
 
+    // 请求发生时的**本地钟点**。用该行自带的 timezoneOffsetMinutes，
+    // 而不是读取时的浏览器时区：账本可能跨夏令时，且记录本就该按当时的钟点归类。
+    // schema v1 的老记录没这个字段，退回浏览器当前偏移（近似，但不丢弃样本）。
+    //
+    // 符号极易写错：JS 的 getTimezoneOffset() 定义为 **UTC 减本地**，
+    // 所以 UTC+8 返回 -480，本地时刻 = startedAt - offset*60000。
+    // 写成加号会把每个钟点整体偏移 16 小时（实测把「白天 98%」错报成「深夜」）。
+    function localHourOf(row) {
+      if (!Number.isSafeInteger(row?.startedAt)) return null;
+      const off = Number.isSafeInteger(row.timezoneOffsetMinutes)
+        ? row.timezoneOffsetMinutes
+        // 同约定，直接取 getTimezoneOffset()，不要再取负（host 就是这么写的）。
+        : new Date(row.startedAt).getTimezoneOffset();
+      if (!Number.isSafeInteger(off)) return null;
+      return new Date(row.startedAt - off * 60_000).getUTCHours();
+    }
+
+    // 分时统计：24 个本地钟点桶。用来回答「这个模型几点好用」
+    // （部分网关按时段计价/限流，实测深夜成功率只有白天的三分之一）。
+    function summarizeUsageByHour(records) {
+      const buckets = Array.from({ length: 24 }, (_, hour) => ({
+        hour, calls: 0, ok: 0, failed: 0, durationMs: 0, successRate: null,
+      }));
+      for (const r of records ?? []) {
+        if (r === null || typeof r !== 'object') continue;
+        const h = localHourOf(r);
+        if (h === null) continue;
+        const b = buckets[h];
+        b.calls += 1;
+        if (r.ok) b.ok += 1; else b.failed += 1;
+        if (Number.isSafeInteger(r.durationMs)) b.durationMs += r.durationMs;
+      }
+      for (const b of buckets) b.successRate = b.calls > 0 ? b.ok / b.calls : null;
+      return buckets;
+    }
+
+    // 时段结论只在样本够用时才给。门槛取 20 而不是想当然的 10：
+    // 真实账本里 space-bunny-free 的 11:00 只有 9 次全败、09:00 只有 11 次全胜，
+    // 按 10 的门槛会报出「时段差 100%」这种纯噪声结论，直接把人骗去改工作时间。
+    function hourExtremes(buckets, minCalls = 20) {
+      const usable = (buckets ?? []).filter(b => b.calls >= minCalls);
+      if (usable.length < 2) return null;
+      const byRate = usable.slice().sort((a, b) => a.successRate - b.successRate);
+      const worst = byRate[0]; const best = byRate[byRate.length - 1];
+      // 差距太小也不给结论：qfmodel 三个时段 86/83/83，说「最好时段」是自欺。
+      if (best.successRate - worst.successRate < 0.1) return null;
+      return { worst, best, sample: usable.reduce((s, b) => s + b.calls, 0) };
+    }
+
     // 账本把 token 分桶存（inputTokens/outputTokens/cacheReadTokens），
     // 没有 totalTokens 字段 —— 与 host 侧 totalOf() 同口径求和，
     // 优先采信上游给出的 totalTokens。
@@ -3424,6 +3487,11 @@ window.__ModuleLoader__.load({
         if (!needle) return true;
         return `${r.model ?? ''} ${r.error?.code ?? ''}`.toLowerCase().includes(needle);
       }).slice().reverse(), [providerRows, statusFilter, needle]);
+
+      // 分时：24 个本地钟点桶 + 只在样本够用时给出的最好/最差时段结论。
+      const hours = useMemo(() => summarizeUsageByHour(providerRows), [providerRows]);
+      const hourMax = useMemo(() => hours.reduce((m, b) => Math.max(m, b.calls), 0) || 1, [hours]);
+      const hourRange = useMemo(() => hourExtremes(hours), [hours]);
 
       // ── 小构件 ──────────────────────────────────────────────
       // 成功率三档色阶：本页的核心可读性手段，一眼看出哪家在拖后腿。
@@ -3671,6 +3739,49 @@ window.__ModuleLoader__.load({
                   r.ok ? null : (r.error?.code ?? t('usageFailed')),
                 ].filter(Boolean).join(' · '))),
           ))),
+
+          // ④ 分时。做这一版的直接动因：真实账本里深夜成功率只有白天的三分之一
+          //    （01:00 26% / 22:00 37% vs 08:00 98% / 18:00 94%），
+          //    部分网关按时段限流或计价，不看钟点就会在错的时段硬撞。
+          React.createElement('div', { style: { height: '4px' } }),
+          sectionTitle(t('usageL2Hours'), hourRange
+            ? [
+              `${t('usageBestHour')} ${String(hourRange.best.hour).padStart(2, '0')}:00 ${Math.round(hourRange.best.successRate * 100)}%`,
+              `${t('usageWorstHour')} ${String(hourRange.worst.hour).padStart(2, '0')}:00 ${Math.round(hourRange.worst.successRate * 100)}%`,
+            ].join('  ·  ')
+            : t('usageHoursInsufficient')),
+          React.createElement('div', {
+            style: { display: 'flex', gap: '3px', padding: '10px 10px 7px', border: `1px solid ${colors.border}`, borderRadius: '10px', background: colors.panel },
+          }, ...hours.map((b) => {
+            const label = `${String(b.hour).padStart(2, '0')}:00`;
+            return React.createElement('div', {
+              key: b.hour,
+              title: b.calls > 0
+                ? `${label} · ${b.calls} ${t('usageColCount')} · ${b.ok} ${t('usageOk')} · ${b.failed} ${t('usageColFailures')} · ${Math.round(b.successRate * 100)}%`
+                : `${label} · 0`,
+              style: { flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' },
+            },
+            React.createElement('div', {
+              // 柱高＝该时段调用数（按本层最大时段归一）；失败堆在上面，
+              // 于是「红帽子」越厚就是那个时段越糟，形状本身即结论。
+              style: { height: '52px', width: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' },
+            },
+              React.createElement('div', {
+                style: {
+                  width: '66%', borderRadius: '2px', overflow: 'hidden',
+                  display: 'flex', flexDirection: 'column',
+                  height: `${b.calls > 0 ? Math.max(4, Math.round((b.calls / hourMax) * 100)) : 2}%`,
+                  background: b.calls > 0 ? 'transparent' : colors.panel2,
+                },
+              },
+                b.failed > 0 ? React.createElement('div', { style: { flexGrow: b.failed, flexBasis: 0, minHeight: 0, background: colors.danger } }) : null,
+                b.ok > 0 ? React.createElement('div', { style: { flexGrow: b.ok, flexBasis: 0, minHeight: 0, background: colors.ok } }) : null,
+              )),
+            React.createElement('span', {
+              style: { fontSize: '9px', ...mono, color: colors.muted, opacity: b.calls > 0 ? 1 : 0.4 },
+            }, String(b.hour)),
+            );
+          })),
         );
       };
 
@@ -3767,6 +3878,9 @@ window.__ModuleLoader__.load({
       totalTokensOf,
       summarizeUsage,
       summarizeUsageByProvider,
+      summarizeUsageByHour,
+      localHourOf,
+      hourExtremes,
       requestUsageSnapshot,
       UsagePill,
       UsageDetailPage,
