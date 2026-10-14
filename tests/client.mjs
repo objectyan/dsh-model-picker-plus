@@ -1639,7 +1639,7 @@ console.log('\n== 用量展示与排序 ==');
       capRegion.includes('CapPill, { key:') && capRegion.includes('UsagePill, { badge: usage, t }'),
       `len=${capRegion.length}`);
     check('CapLine 纵向排列（能力与用量各占一行）',
-      /flexDirection: 'column'/.test(capRegion) && /marginTop: '5px'/.test(capRegion));
+      /flexDirection: 'column'/.test(capRegion) && /alignItems: 'flex-start'/.test(capRegion));
     // 胶囊自己一行（可换行），用量是它的兄弟节点而不是同一行的第 N 个胶囊
     check('能力行独立可换行、用量另起一行',
       /alignItems: 'center', gap: '4px', flexWrap: 'wrap' \} \}, \.\.\.shown\)/.test(capRegion)
@@ -1662,6 +1662,17 @@ console.log('\n== 用量展示与排序 ==');
       check('用量独占最后一行', JSON.stringify(kids[kids.length - 1]).includes('"data-usage"'));
       check('能力行里不掺用量徽章', !JSON.stringify(kids[0]).includes('"data-usage"'));
       check('能力行自己可换行', kids[0]?.props?.style?.flexWrap === 'wrap');
+      check('CapLine 不抢名称的宽度（flex:none，作为行的右侧成员）',
+        node?.props?.style?.flex === 'none', JSON.stringify(node?.props?.style?.flex));
+
+      // 位置：必须是「行」的直接子节点、排在名称内容之后 —— 也就是右侧，
+      // 而不是嵌在名称那个 div 里变成名称下方。
+      const rowKids = (withUsage?.children ?? []).filter(Boolean);
+      const colIdx = rowKids.findIndex(k => k?.props?.style?.flexDirection === 'column');
+      const flexOneIdx = rowKids.findIndex(k => k?.props?.style?.flex === 1);
+      check('能力+用量整组在名称右侧（行的直接子节点）',
+        colIdx > -1 && flexOneIdx > -1 && colIdx > flexOneIdx,
+        `content=${flexOneIdx} capLine=${colIdx} of ${rowKids.length}`);
       const noUsage = CapLine({ group: capGroup, model: capModel, usage: null, t });
       check('无用量时只剩能力行', noUsage && !JSON.stringify(noUsage).includes('"data-usage"'));
       check('既无能力也无用量时整体不渲染',

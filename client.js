@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0-alpha.14';
+    const VERSION = '0.6.0-alpha.15';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -1579,10 +1579,11 @@ window.__ModuleLoader__.load({
       ].filter(Boolean);
       const shown = max ? pills.slice(0, max) : pills;
       if (shown.length === 0 && !usage) return null;
-      // 能力胶囊与用量徽章**各自一行**（上下结构）：两者并排时会互相抢同一行的
-      // 宽度，胶囊一多用量就被挤到行尾。纵向排开之后各占整幅，互不干扰。
+      // 能力胶囊一行、用量徽章一行（上下结构），整组作为行的右侧成员。
+      // 两者并排时会互相抢宽度，胶囊一多就把用量挤到行尾甚至截断；
+      // 纵向排开之后各自完整，左边缘也对齐。
       return React.createElement('span', {
-        style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px', marginTop: '5px' },
+        style: { flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' },
       },
         shown.length
           ? React.createElement('span', { style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' } }, ...shown)
@@ -1670,10 +1671,10 @@ window.__ModuleLoader__.load({
               style: { display: 'block', color: colors.muted, fontSize: '11px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
             }, model.description)
             : null,
-          // 能力与用量换到名称下方，拥有整幅宽度
-          React.createElement(CapLine, { group, model, usage, t }),
         ),
-        // 右侧只留收藏星：能力胶囊与用量徽章已换到名称下方（见 CapLine）。
+        // 能力（上）+ 用量（下）整组放在名称右侧，收藏星再靠右。
+        React.createElement(CapLine, { group, model, usage, t }),
+        // 右侧只留收藏星。
         React.createElement('span', { style: { flex: 'none', display: 'flex', alignItems: 'center', gap: '4px' } },
           React.createElement('button', {
             type: 'button',
@@ -1765,9 +1766,9 @@ window.__ModuleLoader__.load({
           ),
           // 推荐理由只跟任务有关，在顶部说明条统一展示；行内只保留厂家归属。
           React.createElement('div', { style: { color: colors.muted, fontSize: '10.5px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(group.name)),
-          // 能力与用量换到名称下方，与其它视图同一套 CapLine
-          React.createElement(CapLine, { group, model, usage, max: 3, t }),
         ),
+        // 能力（上）+ 用量（下）整组放在名称右侧，收藏星与「使用」再靠右。
+        React.createElement(CapLine, { group, model, usage, max: 3, t }),
         React.createElement('div', { style: { flex: 'none', display: 'flex', alignItems: 'center', gap: '5px' } },
           React.createElement('button', {
             type: 'button',
