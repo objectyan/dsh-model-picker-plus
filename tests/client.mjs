@@ -11,6 +11,14 @@ const check = (label, ok, detail = '') => {
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'client.js'), 'utf8');
 
+// 版本一致性。CI 只核对 tag 与 package.json，管不到 client.js 里那枚
+// **显示给用户看**的 VERSION。两者一旦漂移，界面上的版本号就在说谎，
+// 而四条测试线照样全绿——排查时会照着错的版本号去比对已安装的包。
+const pkgVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+const uiVersion = (source.match(/const VERSION = '([^']+)'/) ?? [])[1];
+check('client.js VERSION 与 package.json 一致', uiVersion === pkgVersion,
+  `client=${uiVersion} pkg=${pkgVersion}`);
+
 function makeReact() {
   let stateOverrides = null;
   let stateCall = 0;
