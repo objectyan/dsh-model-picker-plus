@@ -4,6 +4,72 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0-alpha.3] - 2026-10-13
+
+**用量明细页落地：两级下钻（厂商 → 模型），并把账本读取真正接通。**
+
+本版全部围绕设置页里那个「模型用量明细」。它此前根本显示不出来，
+修好之后又暴露出一批统计口径与布局问题。
+
+### 新增
+
+- **两级下钻**：第一层按 **provider id** 统计（调用数 / token / 耗时 / 失败数 /
+  成功率），点进某厂商后第二层把**该厂商的模型卡片**、**请求明细**、**时间线**
+  三段平铺，且全部限定在该厂商内。
+  两层各自回答一个问题：厂商层答「哪家在拖后腿」，模型层答「这家该用哪个」。
+- **provider id 不按供应商归并**（明确决定，非遗漏）：`qoder` 与 `dsh-provider-qoder`、
+  `workbuddy` 与 `workbuddy-global` 虽同属一家，但是不同接入通道，
+  通道间成功率差异本身就是信号（workbuddy 100% vs workbuddy-global 93%），归并会抹掉它。
+- **汇总改用行卡片**，取代密集表格：每行「用量条 + 调用 / token / 耗时 / 失败 / 成功率」，
+  点击展开平均耗时、平均 token、主要错误码、首次与最近使用时间。
+- **成功率三档色阶**（绿 ≥90% / 黄 ≥60% / 红 <60%），用量条同色，一眼定位异常厂商。
+- **错误码分布统计**：逐码计数并取前二显示在展开区（真实数据里 `RATE_LIMIT×228`
+  占某厂商失败数的绝大多数）。
+- **明细表新增首字延迟与会话列**，可按会话定位具体请求。
+
+### 修复
+
+- **设置页内容空白**：`settings.section` 的契约只声明 `id`/`order`/`label`，
+  组件必须作为 `slots.register` 的**第二个参数**传入；写成 `{ render }` 会被静默忽略，
+  表现为左侧导航有条目、右侧一片空白。
+- **整节被宿主卸载**：`apply` 顶层误引用了只在组件作用域内定义的 RPC 取件器，
+  抛 `ReferenceError` 后宿主把**整个** `settings.section` 摘掉（不止本插件那一项）。
+  现改为在 `apply` 作用域内 `resolveSettingsRpc(ctx)` 经闭包传入；测试锁定该函数名
+  在全文只出现一次，防止回归。
+- **快照读不到**：`/api` 是**单一共享** `rpc.intercept` 拦截器，已被
+  `dsh-tool-antigravity` 占用，挂上去不触发。改用
+  `connection.fetch.register({ path: '/api/model-picker-plus-usage/snapshot' })`
+  注册**精确 Fetch 路由**（官方插件同款），多方共存且复用宿主 origin/认证/peer 准入。
+- **token 列全是破折号**：账本按 `inputTokens`/`outputTokens`/`cacheReadTokens`/
+  `cacheWriteTokens` 分桶存储，**没有** `totalTokens` 字段。新增 `totalTokensOf()`
+  按桶求和（优先采信上游给出的 `totalTokens`），与 host 侧 `totalOf()` 同口径。
+- **统计遇损坏行整页崩**：JSONL 可能解析出 `null` 或原始值，`r.provider` 直接抛。
+  现跳过非对象行与缺 provider/model 的行。
+- **工具栏胶囊被压成竖排单字**（截图里「明细」拆成上下两个字）：6 个胶囊挤在同一个
+  不换行的 flex 容器里。改为排序组与筛选组各自独立容器 + 外层 `flexWrap: 'wrap'`
+  + 胶囊 `whiteSpace: 'nowrap'`，并抽成 `chip()` / `toolbar()` 构件供两层复用。
+- **状态列被裁成 `RATE_L`**：列被内容撑破且 `nowrap` 无省略。改为
+  `maxWidth` + `textOverflow: 'ellipsis'`、容器横向可滚、完整错误码放 `title`。
+- **`formatTokens(0)` 返回空串**导致整轮全失败的模型渲染出空白格。补 `'0'` / `'—'` 兜底。
+- **警示色缺失**：主题未提供 warning token 时三档色阶会塌成文字色。
+  改用 `var(--dsw-alias-state-warning-primary, #d9a441)` 带回退。
+
+### 验证
+
+- 四级测试套件全绿（`node --check` ×2 + client / host-usage / host-apply / host-client-wiring）。
+- **用真实账本跑发布的聚合代码**（`preview/real-check.mjs`）而非只读代码：
+  厂商层与模型层在调用数与 token 上完全对账。该轮跑出的数字纠正了我手写在设计稿里的
+  两处错误（`workbuddy-global` 实为 152.8M 而非 195.1M —— 发布路径按 `usageReported`
+  过滤；平均 token 按上报样本数而非成功数除）。
+- 设计稿先行并经用户确认后才动代码：`preview/prototype.html`（静态原型，
+  数字取自真实账本，`preview/agg.mjs` 为推导脚本）。
+
+### 已知局限
+
+- 用量徽标只匹配**真实模型 id**：WorkBuddy 网关的别名（`auto`/`fast`/`balanced`/
+  `primary`）不会显示，因为账本记的是路由后的真实模型名。
+- 快照单次上限 500 条，超出的历史不进入统计（账本本身完整保留）。
+
 ## [0.6.0-alpha.2] - 2026-10-12
 
 **逐请求使用账本：接通真实 RPC，并修正两处会算错数的逻辑。**
@@ -16,10 +82,12 @@
 - **采集入口拆成独立插件**（`dsh-model-picker-plus/usage`）。此前采集逻辑挂在包根，
   而包根同时承担 Client 半边：根一缺依赖就整个挂不上，Client 也跟着失效。
   现在根保持 no-op，采集是 `cordis.patch.yml` 里独立一行，依赖声明互不牵连。
-- **界面读取改走真实 Connection RPC**：host 用 `connection.rpc.intercept('/api', ...)`
-  注册 `model-picker-plus-usage/snapshot`，复用 DSH 自己的 origin/认证/peer 准入，
-  不新开路由、不绕过鉴权。client 端改为**异步**读取并支持 `AbortSignal`
+- **界面读取改走真实 Connection RPC**：client 端改为**异步**读取并支持 `AbortSignal`
   （菜单关闭即取消，不留悬挂请求）。
+  <!-- 本节原先写的是 host 用 `connection.rpc.intercept('/api', ...)` 注册路由，
+       那是错的：/api 是**单一共享拦截器**，已被 dsh-tool-antigravity 占用，我们
+       挂上去根本不触发。最终方案见 0.6.0-alpha.2 补充段（fetch.register 精确路由），
+       已在 0.6.0-alpha.3 一并说明。保留这段注释是为了不再有人把 intercept 当解法。 -->
 - **去重不再靠 token 指纹**：旧版用「provider|model|各 token 数」判定重复，
   会把**用量恰好相同的两次真实调用**误删。现在每条记录带唯一 `requestId`，
   只有同一个 requestId 才去重；相同 token 数的不同请求照常记录。
