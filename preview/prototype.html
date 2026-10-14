@@ -73,6 +73,19 @@
       border-top:1px dashed var(--line);font-size:11.5px;color:var(--mut)}
   .l4 b{color:var(--tx);font-family:ui-monospace,Consolas,monospace;font-weight:500}
 
+  /* ── 分时：柱高＝该时段调用数；红在上＝失败，绿在下＝成功 ─────────
+     结论行受 hourExtremes 同规则约束：单桶 <20 次或最好/最差差距 <10 个百分点
+     就不给结论，避免拿 9 次全败的时段编出「时段效应」。 */
+  .hrs{display:flex;gap:3px;padding:10px 10px 7px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+  .hr{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px}
+  .hr .slot{height:52px;width:100%;display:flex;align-items:flex-end;justify-content:center}
+  .hr i{width:66%;display:flex;flex-direction:column;border-radius:2px;overflow:hidden}
+  .hr i b{display:block;min-height:0}
+  .hr i .r{background:var(--bad)}
+  .hr i .g{background:var(--ok)}
+  .hr span{font-size:9px;font-family:ui-monospace,Consolas,monospace;color:var(--mut)}
+  .hr.off span{opacity:.4}
+
   .tw{overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th{position:sticky;top:0;background:var(--panel);text-align:left;padding:10px 12px;color:var(--mut);
@@ -269,6 +282,39 @@
           <div class="x"><span class="bad">PI_AI_ERROR</span> · 20.1s</div></div></div>
     </div>
   </div>
+  <div class="sec">
+    <div class="sech"><h2>分时</h2><span>最好时段 10:00 90%  ·  最差时段 11:00 0%</span></div>
+    <div class="bar" style="margin:0 0 6px">
+      <span class="count" style="margin-left:0">按请求发生时的本地钟点 · 柱高＝调用数 · 绿＝成功 红＝失败</span>
+    </div>
+    <div class="hrs">
+        <div class="hr off" title="00:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>00</span></div>
+        <div class="hr off" title="01:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>01</span></div>
+        <div class="hr off" title="02:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>02</span></div>
+        <div class="hr off" title="03:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>03</span></div>
+        <div class="hr off" title="04:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>04</span></div>
+        <div class="hr off" title="05:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>05</span></div>
+        <div class="hr off" title="06:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>06</span></div>
+        <div class="hr off" title="07:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>07</span></div>
+        <div class="hr" title="08:00 · 8 调用 · 6 成功 · 2 失败 · 75%"><div class="slot"><i style="height:4%"><b class="r" style="flex-grow:2"></b><b class="g" style="flex-grow:6"></b></i></div><span>08</span></div>
+        <div class="hr" title="09:00 · 75 调用 · 41 成功 · 34 失败 · 55%"><div class="slot"><i style="height:42%"><b class="r" style="flex-grow:34"></b><b class="g" style="flex-grow:41"></b></i></div><span>09</span></div>
+        <div class="hr" title="10:00 · 112 调用 · 101 成功 · 11 失败 · 90%"><div class="slot"><i style="height:63%"><b class="r" style="flex-grow:11"></b><b class="g" style="flex-grow:101"></b></i></div><span>10</span></div>
+        <div class="hr" title="11:00 · 20 调用 · 0 成功 · 20 失败 · 0%"><div class="slot"><i style="height:11%"><b class="r" style="flex-grow:20"></b><b class="g" style="flex-grow:0"></b></i></div><span>11</span></div>
+        <div class="hr off" title="12:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>12</span></div>
+        <div class="hr" title="13:00 · 57 调用 · 35 成功 · 22 失败 · 61%"><div class="slot"><i style="height:32%"><b class="r" style="flex-grow:22"></b><b class="g" style="flex-grow:35"></b></i></div><span>13</span></div>
+        <div class="hr" title="14:00 · 141 调用 · 52 成功 · 89 失败 · 37%"><div class="slot"><i style="height:79%"><b class="r" style="flex-grow:89"></b><b class="g" style="flex-grow:52"></b></i></div><span>14</span></div>
+        <div class="hr" title="15:00 · 178 调用 · 59 成功 · 119 失败 · 33%"><div class="slot"><i style="height:100%"><b class="r" style="flex-grow:119"></b><b class="g" style="flex-grow:59"></b></i></div><span>15</span></div>
+        <div class="hr" title="16:00 · 19 调用 · 10 成功 · 9 失败 · 53%"><div class="slot"><i style="height:11%"><b class="r" style="flex-grow:9"></b><b class="g" style="flex-grow:10"></b></i></div><span>16</span></div>
+        <div class="hr" title="17:00 · 45 调用 · 12 成功 · 33 失败 · 27%"><div class="slot"><i style="height:25%"><b class="r" style="flex-grow:33"></b><b class="g" style="flex-grow:12"></b></i></div><span>17</span></div>
+        <div class="hr off" title="18:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>18</span></div>
+        <div class="hr off" title="19:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>19</span></div>
+        <div class="hr off" title="20:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>20</span></div>
+        <div class="hr off" title="21:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>21</span></div>
+        <div class="hr off" title="22:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>22</span></div>
+        <div class="hr off" title="23:00 · 0"><div class="slot"><i style="height:2%;background:var(--panel2)"></i></div><span>23</span></div>
+    </div>
+  </div>
+
 </div>
 
 </body>
