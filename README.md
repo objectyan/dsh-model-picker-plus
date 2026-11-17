@@ -1,18 +1,25 @@
 ## 功能
 
-把 DSH 原生的扁平模型选择器换成分组模型库。
+把 DSH 原生的扁平模型选择器换成一个可搜索、可分组的模型库——**只改模型下拉这一处**，其它界面不动。当前版本：`0.7.0`。
 
-**模型列表**
-- **双行流式标签栏**：固定视图（推荐 / 最近使用 / 收藏 / 全部模型）之后紧接厂家标签，两行按实测宽度填满后才折叠，剩余厂家由「更多 N」承接——不会静默裁掉，也不会为「更多」单独占一行。
-- **能力胶囊**：视觉 / 推理 / 工具 / 多模态 / 免费，按 endpoint 声明与快照综合判定，命中才显示。
-- **思考档位可见**：可切换档位的模型在标题旁显示档位摘要（如 `High`、`思考 5 档`），点触发条上的档位文字就地切换，不必进大菜单翻「当前」卡片。
-- **搜索与筛选**：跨厂家搜索模型名 / ID / 描述，按能力筛选。
+**左右两栏面板**
+- **顶部全局检索条**：搜索框横跨两栏，搜模型名 / ID / 描述 / 厂家 / 用途，一处输入全局生效。
+- **左导航 / 右列表**：固定视图（推荐 / 最近使用 / 收藏 / 全部模型）以 2×2 网格钉在导航顶部（sticky，不随滚动）；下方是**全部厂家**列表（一次列全，不再折叠成「更多 N」），点某个厂家，右栏只列该厂家的模型。
+- **打开即定位当前厂商**：打开模型库默认落在当前选中模型所属的厂商页，不用每次从头找。
+- **当前模型卡**：右栏顶部显示当前模型 / 厂家与思考档位（如 `High`、`思考 5 档`），就地切换不必翻菜单。选中带倍率 / 官方徽章的模型后，底部触发条也保留 `x0` 倍率芯片与「限时免费」徽章。
+
+**搜索、筛选与收藏**
+- **能力胶囊**：全部 / 免费 / 视觉 / 推理 / 工具，按 endpoint 声明与快照综合判定，命中才显示。
+- **跨厂家搜索**：模型名 / ID / 描述 / 用途全字段检索。
 - **收藏与最近使用**：置顶常用模型。
+- **用量排序**：默认 / 按调用 / 按 token / 按耗时。
 
-**厂家标签排序**
+**官方功能自动同步**
+- 面板自动渲染官方 `conversation.input.model.options` 子槽的所有条目——官方以后往模型菜单加任何新功能（含「启用智能体团队协作」开关）都会自动出现在这里，无需插件改版追赶。
+
+**厂家排序**
 - 首次使用无记录时**完全保持目录默认顺序**，不打乱既有习惯。
-- 之后按**成功回复的消息数**降序，常用的自动浮到前面。
-- 同频次保持目录相对顺序（稳定排序），标签位置不会莫名跳动。
+- 之后按**成功回复的消息数**降序，常用的自动浮到前面；同频次保持目录相对顺序（稳定排序），标签位置不会莫名跳动。
 
 **品牌图标**
 - 内置 simple-icons、models.dev 官方标与 HF 矢量化补位三级图标源，按模型→厂家→首字母依次回退。
@@ -40,10 +47,10 @@ dsh plugin --profile web add dsh-model-picker-plus
 dsh plugin --profile web add github:objectyan/dsh-model-picker-plus
 
 # 指定版本 tag
-dsh plugin --profile web add "github:objectyan/dsh-model-picker-plus#v0.5.0"
+dsh plugin --profile web add "github:objectyan/dsh-model-picker-plus#v0.7.0"
 
 # 或直接用 Release 的 tgz 链接
-dsh plugin --profile web add "https://github.com/objectyan/dsh-model-picker-plus/releases/download/v0.5.0/dsh-model-picker-plus-0.5.0.tgz"
+dsh plugin --profile web add "https://github.com/objectyan/dsh-model-picker-plus/releases/download/v0.7.0/dsh-model-picker-plus-0.7.0.tgz"
 ```
 
 ## 发布
@@ -51,7 +58,7 @@ dsh plugin --profile web add "https://github.com/objectyan/dsh-model-picker-plus
 打 tag 即发布，走 npm 可信发布（Trusted Publishing），无需长期 token：
 
 ```sh
-git tag v0.5.0 && git push origin main --tags
+git tag v0.7.0 && git push origin main --tags
 ```
 
 Workflow 会依次校验 **tag 与 package.json 版本一致** → **跑测试** → **发布**，任一环节失败都不会推到 npm。
