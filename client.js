@@ -16,15 +16,2173 @@ window.__ModuleLoader__.load({
     var exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
     const React = require('react');
+
+    // ── 官方选择器源码（复制自 app.asar）─
+    // 官方包不导出 ModelSelect，这里复制源码后手动导出，作为底座叠加倍率芯片。
+    // 官方源码内联：插件的 require 是宿主模块表，不认相对路径，
+    // 所以只能把源码直接嵌进来，而不是 require 一个文件。
+    let officialSelect = null;
+    try {
+      officialSelect = (function (require) {
+		var module = { exports: {} };
+		var exports = module.exports;
+		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+		let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
+		let _deepseek_ai_cordis = require("@deepseek-ai/cordis");
+		let _deepseek_ai_dsh_client_store = require("@deepseek-ai/dsh-client-store");
+		let react_jsx_runtime = require("react/jsx-runtime");
+		let react = require("react");
+		let react_dom = require("react-dom");
+		//#region ../../util/values/src/partial-json.ts
+		/**
+		* Lazily scanned view of one JSON object's top-level fields, built from text
+		* that may still be streaming or from an already parsed object. Nothing is
+		* scanned until a reader asks; the view remembers every question it answered
+		* and reports changed answers when the owner refreshes for publication.
+		* Used for model tool-call arguments: a row reads the fields it
+		* cares about at whatever granularity it displays, at every stage of the call.
+		* @module @deepseek-ai/dsh-util-values/src/partial-json
+		*/
+		const SIMPLE_ESCAPES = {
+			"\"": "\"",
+			"\\": "\\",
+			"/": "/",
+			b: "\b",
+			f: "\f",
+			n: "\n",
+			r: "\r",
+			t: "	"
+		};
+		const CONTENT_ESCAPE = /[\\\u0000-\u001f]/u;
+		function isWhitespace(c) {
+			return c === " " || c === "\n" || c === "\r" || c === "	";
+		}
+		function isHex(c) {
+			return c >= "0" && c <= "9" || c >= "a" && c <= "f" || c >= "A" && c <= "F";
+		}
+		(class PartialArguments {
+			/** The view of a call with no arguments available. */
+			static EMPTY = PartialArguments.fromObject({});
+			/**
+			* View finished argument text without scanning it until a reader asks.
+			* @param text - the complete argument JSON text.
+			* @returns a sealed view.
+			*/
+			static fromText(text) {
+				const view = new PartialArguments();
+				view.append(text);
+				view.sealed = true;
+				return view;
+			}
+			/**
+			* View an already parsed argument payload, such as a PTC dispatch object.
+			* @param value - the parsed argument value.
+			* @returns a sealed view; a non-object payload has no fields.
+			*/
+			static fromObject(value) {
+				const view = new PartialArguments();
+				view.object = typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
+				view.sealed = true;
+				return view;
+			}
+			/**
+			* The source: text so far or a parsed object, plus whether it can still grow.
+			* These are the only enumerable fields, so two views over the same source
+			* compare equal structurally however far each has been read.
+			*/
+			chunks = [];
+			object;
+			sealed = false;
+			#ends = [];
+			#size = 0;
+			#consumed = 0;
+			#mode = "root";
+			#escape = false;
+			#keyStart = 0;
+			#keyEscaped = false;
+			#key = "";
+			#current = null;
+			#nestedEnds = [];
+			#nestedInString = false;
+			#invalidAt;
+			#invalidValue = false;
+			#entries = /* @__PURE__ */ new Map();
+			#order = [];
+			#reads = /* @__PURE__ */ new Map();
+			/** Whether this view rejects further appends; does not scan text or register reads. */
+			get isSealed() {
+				return this.sealed;
+			}
+			/** Whether indexing or a content read found invalid JSON; unread value contents are not validated. */
+			get invalid() {
+				this.scan();
+				return this.#mode === "invalid" || this.#invalidValue;
+			}
+			/**
+			* Retain streamed argument text without scanning or comparing observed answers.
+			* @param fragment - the text following every fragment appended before.
+			*/
+			append(fragment) {
+				if (this.sealed) throw new Error("PartialArguments: cannot append to a sealed view");
+				if (fragment.length === 0) return;
+				this.chunks.push(fragment);
+				this.#size += fragment.length;
+				this.#ends.push(this.#size);
+			}
+			/**
+			* Reconcile a streamed prefix with authoritative complete text without joining the fragments.
+			* @param text - the final argument text, which replaces missing or conflicting deltas.
+			* @returns this view sealed with its caches retained when every character matches; otherwise a new sealed view.
+			*/
+			settle(text) {
+				if (this.object !== void 0 || text.length !== this.#size) return PartialArguments.fromText(text);
+				let offset = 0;
+				for (const chunk of this.chunks) {
+					if (!text.startsWith(chunk, offset)) return PartialArguments.fromText(text);
+					offset += chunk.length;
+				}
+				this.chunks = text.length === 0 ? [] : [text];
+				this.#ends = text.length === 0 ? [] : [text.length];
+				this.sealed = true;
+				return this;
+			}
+			/**
+			* Compare observed answers and advance their publication baseline. Unread views remain unscanned.
+			* @returns whether any observed answer changed since its first read or the preceding refresh.
+			*/
+			refresh() {
+				if (this.#reads.size === 0) return false;
+				this.scan();
+				let changed = false;
+				let completions = false;
+				for (const read of this.#reads.values()) {
+					if (read.completion) {
+						completions = true;
+						continue;
+					}
+					changed = this.refreshRead(read) || changed;
+				}
+				if (completions) {
+					for (const read of this.#reads.values()) if (read.completion) changed = this.refreshRead(read) || changed;
+				}
+				if (this.sealed) this.#reads.clear();
+				return changed;
+			}
+			refreshRead(read) {
+				const now = read.answer();
+				if (Object.is(now, read.last)) return false;
+				read.last = now;
+				return true;
+			}
+			/**
+			* Check whether no further fields can arrive.
+			* @returns whether the outer object closed, indexing failed, or the view is sealed; unread values are not validated.
+			*/
+			closed() {
+				return this.remember("closed", "", () => this.closedNow());
+			}
+			/**
+			* List discovered fields in first-appearance order.
+			* @returns top-level keys seen so far, in first-appearance order.
+			*/
+			keys() {
+				return this.remember("keys", "", () => this.keysNow(), (keys) => keys.length);
+			}
+			/**
+			* Check whether a top-level field has appeared.
+			* @param key - argument name.
+			* @returns whether the field has appeared (a string opened or another value began).
+			*/
+			has(key) {
+				return this.remember("has", key, () => this.hasNow(key));
+			}
+			/**
+			* Check whether a field's closing delimiter has arrived, without validating its contents.
+			* @param key - argument name.
+			* @returns whether its delimiter arrived and no content reader has reported an error for this value.
+			*/
+			complete(key) {
+				return this.remember("complete", key, () => this.completeNow(key));
+			}
+			/**
+			* Read string length without materializing its text.
+			* @param key - argument name.
+			* @param options - change granularity for a streaming string.
+			* @returns decoded UTF-16 length of the string field so far; undefined when absent or not a string.
+			*/
+			stringLength(key, options) {
+				const step = Math.max(1, Math.floor(options?.step ?? 1));
+				const offset = options?.offset ?? 0;
+				return this.remember(`length:${step}:${offset}`, key, () => this.lengthNow(key), (length) => length === void 0 ? void 0 : Math.ceil((length + offset) / step));
+			}
+			/**
+			* Check a string against a decoded UTF-16 length limit without materializing it.
+			* @param key - argument name.
+			* @param maxLength - decoded UTF-16 limit, floored to at least zero.
+			* @returns whether the string is longer than the limit; false when absent or not a string.
+			*/
+			stringExceeds(key, maxLength) {
+				const limit = Math.max(0, Math.floor(maxLength));
+				return this.remember(`exceeds:${limit}`, key, () => (this.lengthNow(key, limit + 1) ?? 0) > limit);
+			}
+			/**
+			* Read a decoded string, including a streaming prefix.
+			* @param key - argument name.
+			* @returns the string field's decoded text so far; undefined when absent or not a string.
+			*/
+			text(key) {
+				return this.remember("text", key, () => this.textNow(key));
+			}
+			/**
+			* Read at most the first decoded UTF-16 units of a string.
+			* @param key - argument name.
+			* @param maxLength - maximum decoded UTF-16 length, floored to at least one.
+			* @returns the bounded string prefix; undefined when absent or not a string.
+			*/
+			textPrefix(key, maxLength) {
+				const limit = Math.max(1, Math.floor(maxLength));
+				return this.remember(`prefix:${limit}`, key, () => this.textPrefixNow(key, limit));
+			}
+			/**
+			* Read a completed non-string argument.
+			* @param key - argument name.
+			* @returns the parsed non-string value once it closed; undefined while open, absent, or a string.
+			*/
+			value(key) {
+				return this.remember("value", key, () => this.valueNow(key));
+			}
+			/** Answer a question and, on a streaming view, remember it for change detection. */
+			remember(kind, key, read, comparison) {
+				this.scan();
+				const result = read();
+				if (!this.sealed) {
+					const id = `${kind}/${key}`;
+					if (!this.#reads.has(id)) this.#reads.set(id, {
+						completion: kind === "complete",
+						answer: comparison === void 0 ? read : () => comparison(read()),
+						last: comparison === void 0 ? result : comparison(result)
+					});
+				}
+				return result;
+			}
+			closedNow() {
+				return this.sealed || this.#mode === "closed" || this.#mode === "invalid";
+			}
+			keysNow() {
+				return this.object === void 0 ? this.#order : Object.keys(this.object);
+			}
+			hasNow(key) {
+				return this.object === void 0 ? this.#entries.has(key) : Object.hasOwn(this.object, key);
+			}
+			completeNow(key) {
+				if (this.object !== void 0) return Object.hasOwn(this.object, key);
+				const entry = this.#entries.get(key);
+				return entry !== void 0 && entry.end >= 0 && (entry.kind === "string" ? entry.invalidAt === void 0 : !entry.invalid);
+			}
+			lengthNow(key, limit = Number.POSITIVE_INFINITY) {
+				if (this.object !== void 0) {
+					const field = Object.hasOwn(this.object, key) ? this.object[key] : void 0;
+					return typeof field === "string" ? field.length : void 0;
+				}
+				const entry = this.#entries.get(key);
+				if (entry?.kind !== "string") return void 0;
+				if (entry.text !== void 0 && entry.text.at === entry.end) return entry.text.length;
+				const read = entry.length ??= {
+					at: entry.start,
+					length: 0,
+					text: ""
+				};
+				this.readString(entry, read, limit, false);
+				return read.length;
+			}
+			textNow(key) {
+				if (this.object !== void 0) {
+					const field = Object.hasOwn(this.object, key) ? this.object[key] : void 0;
+					return typeof field === "string" ? field : void 0;
+				}
+				const entry = this.#entries.get(key);
+				if (entry?.kind !== "string") return void 0;
+				if (entry.text === void 0 && entry.end >= 0 && entry.needsDecoding && entry.invalidAt === void 0) {
+					let text;
+					try {
+						text = JSON.parse(`"${this.slice(entry.start, entry.end)}"`);
+					} catch (_error) {}
+					if (text !== void 0) entry.text = {
+						at: entry.end,
+						length: text.length,
+						text
+					};
+				}
+				const read = entry.text ??= {
+					at: entry.start,
+					length: 0,
+					text: ""
+				};
+				this.readString(entry, read, Number.POSITIVE_INFINITY, true);
+				return read.text;
+			}
+			textPrefixNow(key, maxLength) {
+				if (this.object !== void 0) {
+					const field = Object.hasOwn(this.object, key) ? this.object[key] : void 0;
+					return typeof field === "string" ? field.slice(0, maxLength) : void 0;
+				}
+				const entry = this.#entries.get(key);
+				if (entry?.kind !== "string") return void 0;
+				const prefixes = entry.prefixes ??= /* @__PURE__ */ new Map();
+				let read = prefixes.get(maxLength);
+				if (read === void 0) {
+					read = {
+						at: entry.start,
+						length: 0,
+						text: ""
+					};
+					prefixes.set(maxLength, read);
+				}
+				this.readString(entry, read, maxLength, true);
+				return read.text;
+			}
+			valueNow(key) {
+				if (this.object !== void 0) {
+					if (!Object.hasOwn(this.object, key)) return void 0;
+					const field = this.object[key];
+					return typeof field === "string" ? void 0 : field;
+				}
+				const entry = this.#entries.get(key);
+				if (entry?.kind !== "value" || entry.end < 0 || entry.invalid) return void 0;
+				if (entry.parsed === void 0) try {
+					entry.parsed = JSON.parse(this.slice(entry.start, entry.end));
+				} catch (_error) {
+					entry.invalid = true;
+					this.#invalidValue = true;
+				}
+				return entry.parsed;
+			}
+			chunkAt(at) {
+				let low = 0;
+				let high = this.#ends.length;
+				while (low < high) {
+					const mid = low + high >>> 1;
+					if (this.#ends[mid] <= at) low = mid + 1;
+					else high = mid;
+				}
+				return low;
+			}
+			/** Materialize only a requested range, never the cumulative source. */
+			slice(start, end) {
+				if (start >= end) return "";
+				const first = this.chunkAt(start);
+				const last = this.chunkAt(end - 1);
+				const base = first === 0 ? 0 : this.#ends[first - 1];
+				if (first === last) return this.chunks[first].slice(start - base, end - base);
+				const parts = [this.chunks[first].slice(start - base)];
+				for (let i = first + 1; i < last; i++) parts.push(this.chunks[i]);
+				parts.push(this.chunks[last].slice(0, end - this.#ends[last - 1]));
+				return parts.join("");
+			}
+			readString(entry, read, limit, materialize) {
+				const end = Math.min(entry.end < 0 ? this.#consumed : entry.end, entry.invalidAt ?? Number.POSITIVE_INFINITY, this.#invalidAt ?? Number.POSITIVE_INFINITY);
+				if (!entry.needsDecoding) {
+					const length = Math.min(end - read.at, limit - read.length);
+					if (length <= 0) return;
+					if (materialize) read.text += this.slice(read.at, read.at + length);
+					read.at += length;
+					read.length += length;
+					return;
+				}
+				let chunkIndex = this.chunkAt(read.at);
+				while (read.at < end && read.length < limit) {
+					const base = chunkIndex === 0 ? 0 : this.#ends[chunkIndex - 1];
+					const chunk = this.chunks[chunkIndex];
+					const remaining = chunk.slice(read.at - base, Math.min(chunk.length, end - base));
+					const boundary = remaining.search(CONTENT_ESCAPE);
+					const length = Math.min(boundary < 0 ? remaining.length : boundary, limit - read.length);
+					if (length > 0) {
+						if (materialize) read.text += remaining.slice(0, length);
+						read.at += length;
+						read.length += length;
+						if (read.at === base + chunk.length) chunkIndex++;
+						continue;
+					}
+					const type = remaining.length > 1 ? remaining[1] : read.at + 1 < end ? this.chunks[chunkIndex + 1][0] : void 0;
+					let decoded;
+					let width = 2;
+					if (remaining[0] === "\\" && type === void 0 && entry.end < 0) return;
+					if (remaining[0] === "\\" && type === "u") {
+						const hex = this.slice(read.at + 2, Math.min(end, read.at + 6));
+						let valid = true;
+						for (let i = 0; i < hex.length; i++) if (!isHex(hex[i])) valid = false;
+						if (valid) {
+							if (hex.length < 4 && entry.end < 0) return;
+							if (hex.length === 4) decoded = String.fromCharCode(Number.parseInt(hex, 16));
+						}
+						width = 6;
+					} else if (remaining[0] === "\\" && type !== void 0) decoded = SIMPLE_ESCAPES[type];
+					if (decoded === void 0) {
+						entry.invalidAt = read.at;
+						this.#invalidValue = true;
+						return;
+					}
+					if (materialize) read.text += decoded;
+					read.length++;
+					read.at += width;
+					while (chunkIndex < this.chunks.length && read.at >= this.#ends[chunkIndex]) chunkIndex++;
+				}
+			}
+			/** Locate new field ranges without decoding or parsing their contents. */
+			scan() {
+				if (this.object !== void 0 || this.#consumed === this.#size) return;
+				for (let i = this.chunkAt(this.#consumed); i < this.chunks.length && this.#invalidAt === void 0; i++) {
+					const pending = this.chunks[i];
+					const base = i === 0 ? 0 : this.#ends[i - 1];
+					for (let index = this.#consumed - base; index < pending.length && this.#mode !== "invalid"; index++) {
+						if (this.#mode === "string" || this.#mode === "nested" && this.#nestedInString) {
+							const end = this.stringBoundary(pending, index);
+							this.#consumed += end - index;
+							index = end;
+							if (index === pending.length) break;
+						}
+						this.step(pending[index], this.#consumed);
+						this.#consumed++;
+					}
+				}
+			}
+			/** Only raw quotes and their preceding backslash runs can terminate a string. */
+			stringBoundary(fragment, start) {
+				let at = start;
+				while (true) {
+					const quote = fragment.indexOf("\"", at);
+					const end = quote < 0 ? fragment.length : quote;
+					if (this.#mode === "string") {
+						const entry = this.#current;
+						if (!entry.needsDecoding && CONTENT_ESCAPE.test(fragment.slice(at, end))) entry.needsDecoding = true;
+					}
+					let slashStart = end;
+					while (slashStart > at && fragment[slashStart - 1] === "\\") slashStart--;
+					const escaped = (end - slashStart) % 2 === 1 !== (slashStart === at && this.#escape);
+					this.#escape = quote < 0 && escaped;
+					if (quote < 0 || !escaped) return end;
+					at = quote + 1;
+				}
+			}
+			step(c, at) {
+				switch (this.#mode) {
+					case "root":
+						if (isWhitespace(c)) return;
+						if (c === "{") {
+							this.#mode = "key-or-end";
+							return;
+						}
+						this.fail();
+						return;
+					case "key-or-end":
+						if (isWhitespace(c)) return;
+						if (c === "}") {
+							this.#mode = "closed";
+							return;
+						}
+						if (c === "\"") {
+							this.beginKey(at);
+							return;
+						}
+						this.fail();
+						return;
+					case "key-only":
+						if (isWhitespace(c)) return;
+						if (c === "\"") {
+							this.beginKey(at);
+							return;
+						}
+						this.fail();
+						return;
+					case "key":
+						this.stepKey(c, at);
+						return;
+					case "colon":
+						if (isWhitespace(c)) return;
+						if (c === ":") {
+							this.#mode = "value";
+							return;
+						}
+						this.fail();
+						return;
+					case "value":
+						this.beginValue(c, at);
+						return;
+					case "string": {
+						const entry = this.#current;
+						entry.end = at;
+						this.#current = null;
+						this.#mode = "comma-or-end";
+						return;
+					}
+					case "scalar":
+						this.stepScalar(c, at);
+						return;
+					case "nested":
+						this.stepNested(c, at);
+						return;
+					case "comma-or-end":
+						if (isWhitespace(c)) return;
+						if (c === ",") {
+							this.#mode = "key-only";
+							return;
+						}
+						if (c === "}") {
+							this.#mode = "closed";
+							return;
+						}
+						this.fail();
+						return;
+					case "closed":
+						if (isWhitespace(c)) return;
+						this.fail();
+						return;
+					/* v8 ignore next 2 -- scan() stops stepping once the view is invalid. */
+					case "invalid": return;
+					/* v8 ignore next 2 -- Every scanner mode has a handler above. */
+					default: assertNever(this.#mode);
+				}
+			}
+			fail() {
+				this.#invalidAt = this.#consumed;
+				this.#mode = "invalid";
+				this.#current = null;
+			}
+			beginKey(at) {
+				this.#mode = "key";
+				this.#keyStart = at + 1;
+				this.#keyEscaped = false;
+				this.#escape = false;
+			}
+			stepKey(c, at) {
+				if (c < " ") {
+					this.fail();
+					return;
+				}
+				if (this.#escape) {
+					this.#escape = false;
+					return;
+				}
+				if (c === "\\") {
+					this.#escape = true;
+					this.#keyEscaped = true;
+					return;
+				}
+				if (c !== "\"") return;
+				const raw = this.slice(this.#keyStart, at);
+				if (this.#keyEscaped) try {
+					this.#key = JSON.parse(`"${raw}"`);
+				} catch (_error) {
+					this.fail();
+					return;
+				}
+				else this.#key = raw;
+				this.#mode = "colon";
+			}
+			open(entry) {
+				if (!this.#entries.has(this.#key)) this.#order.push(this.#key);
+				this.#entries.set(this.#key, entry);
+				this.#current = entry;
+			}
+			beginValue(c, at) {
+				if (isWhitespace(c)) return;
+				if (c === "\"") {
+					this.open({
+						kind: "string",
+						start: at + 1,
+						end: -1,
+						needsDecoding: false,
+						invalidAt: void 0,
+						length: void 0,
+						text: void 0,
+						prefixes: void 0
+					});
+					this.#escape = false;
+					this.#mode = "string";
+					return;
+				}
+				if (c === "}" || c === "," || c === ":" || c === "]") {
+					this.fail();
+					return;
+				}
+				this.open({
+					kind: "value",
+					start: at,
+					end: -1,
+					parsed: void 0,
+					invalid: false
+				});
+				if (c === "{" || c === "[") {
+					this.#mode = "nested";
+					this.#nestedEnds = [c === "{" ? "}" : "]"];
+					this.#nestedInString = false;
+					this.#escape = false;
+					return;
+				}
+				this.#mode = "scalar";
+			}
+			stepScalar(c, at) {
+				if (c !== "," && c !== "}" && !isWhitespace(c)) return;
+				this.closeValue(at);
+				this.#mode = c === "," ? "key-only" : c === "}" ? "closed" : "comma-or-end";
+			}
+			stepNested(c, at) {
+				if (this.#nestedInString) {
+					this.#nestedInString = false;
+					return;
+				}
+				if (c === "\"") {
+					this.#nestedInString = true;
+					return;
+				}
+				if (c === "{" || c === "[") {
+					this.#nestedEnds.push(c === "{" ? "}" : "]");
+					return;
+				}
+				if (c === "}" || c === "]") {
+					if (this.#nestedEnds.pop() !== c) {
+						this.fail();
+						return;
+					}
+					if (this.#nestedEnds.length === 0) {
+						this.closeValue(at + 1);
+						this.#mode = "comma-or-end";
+					}
+				}
+			}
+			closeValue(end) {
+				const entry = this.#current;
+				entry.end = end;
+				this.#current = null;
+			}
+		});
+		//#endregion
+		//#region ../../util/values/src/index.ts
+		/**
+		* Mark an unreachable closed-union branch.
+		* @param value - impossible value; an unhandled typed variant fails at the call site.
+		* @param context - optional switch-site label included in the failure message.
+		* @returns never; a runtime value that escaped its type always throws.
+		*/
+		function assertNever(value, context) {
+			const rendered = JSON.stringify(value) ?? String(value);
+			throw new Error(`unreachable variant${context ? ` in ${context}` : ""}: ${rendered}`);
+		}
+		/**
+		* Weak-key lookup with a strongly retained iterable set of associated values.
+		*
+		* Each value must belong to only one key. The container performs no automatic
+		* cleanup; owners delete associations or clear the container at lifecycle end.
+		*/
+		var WeakMapWithValues = class {
+			keys = /* @__PURE__ */ new WeakMap();
+			valueSet = /* @__PURE__ */ new Set();
+			/** Live strongly retained values in insertion order. */
+			values = this.valueSet;
+			/**
+			* Read the value associated with a key.
+			* @param key - weakly held lookup key.
+			* @returns the associated value, or absence.
+			*/
+			get(key) {
+				return this.keys.get(key);
+			}
+			/**
+			* Test whether a key has an association.
+			* @param key - weakly held lookup key.
+			* @returns whether the key is present.
+			*/
+			has(key) {
+				return this.keys.has(key);
+			}
+			/**
+			* Associate one key with one caller-unique value.
+			* @param key - weakly held lookup key.
+			* @param value - strongly retained value that belongs to no other key.
+			* @returns this container.
+			*/
+			set(key, value) {
+				if (this.keys.has(key)) {
+					const previous = this.keys.get(key);
+					if (previous === value) return this;
+					this.valueSet.delete(previous);
+				}
+				this.keys.set(key, value);
+				this.valueSet.add(value);
+				return this;
+			}
+			/**
+			* Remove one association and its strongly retained value.
+			* @param key - weakly held lookup key.
+			* @returns whether an association was removed.
+			*/
+			delete(key) {
+				if (!this.keys.has(key)) return false;
+				const value = this.keys.get(key);
+				const deleted = this.keys.delete(key);
+				this.valueSet.delete(value);
+				return deleted;
+			}
+			/** Remove every association and strongly retained value. */
+			clear() {
+				this.keys = /* @__PURE__ */ new WeakMap();
+				this.valueSet.clear();
+			}
+		};
+		//#endregion
+		//#region lib/types/client/catalog.js
+		/** One Host-generation model catalog shared by every Session selector. */
+		/** Loads at most one model catalog for the current Host generation. */
+		var ModelCatalogDirectory = class {
+			ctx;
+			/** Current shared catalog value and load lifecycle. */
+			store = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)({
+				value: null,
+				status: "idle",
+				error: null
+			});
+			reasoning = /* @__PURE__ */ new Map();
+			/**
+			* Read the last advertised reasoning metadata, including unavailable models.
+			* @param selection - provider and model whose effort is displayed.
+			* @returns reasoning metadata observed during this Host generation.
+			*/
+			reasoningFor(selection) {
+				return this.reasoning.get(JSON.stringify([selection.provider, selection.model]));
+			}
+			generation = 0;
+			inflight;
+			/**
+			* @param ctx - the providing plugin's context, whose `remote.session`
+			* namespace carries the Host-generation catalog.
+			*/
+			constructor(ctx) {
+				this.ctx = ctx;
+			}
+			/**
+			* Return the current generation's catalog, sharing its one in-flight load.
+			* @returns the loaded global catalog.
+			*/
+			load() {
+				const state = this.store.getSnapshot();
+				if (state.status === "ready" && state.value !== null) return Promise.resolve(state.value);
+				if (this.inflight !== void 0) return this.inflight;
+				const generation = this.generation;
+				this.store.update((draft) => {
+					draft.status = "loading";
+					draft.error = null;
+				});
+				const operation = this.ctx.remote.session.modelCatalog().then((response) => {
+					if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
+					if (generation === this.generation) {
+						for (const group of response.value.groups) for (const model of group.models) this.reasoning.set(JSON.stringify([group.id, model.id]), model.reasoning);
+						this.store.set({
+							value: response.value,
+							status: "ready",
+							error: null
+						});
+					}
+					return response.value;
+				}).catch((error) => {
+					if (generation === this.generation) this.store.update((draft) => {
+						draft.status = "error";
+						draft.error = error instanceof Error ? error.message : String(error);
+					});
+					throw error;
+				}).finally(() => {
+					if (generation === this.generation && this.inflight === operation) this.inflight = void 0;
+				});
+				this.inflight = operation;
+				return operation;
+			}
+			/**
+			* Invalidate the loaded catalog; the next explicit menu read reloads it.
+			* @param clear - whether values from the previous Host generation must be hidden.
+			*/
+			invalidate(clear = false) {
+				this.generation += 1;
+				this.inflight = void 0;
+				const value = clear ? null : this.store.getSnapshot().value;
+				this.store.set({
+					value,
+					status: "idle",
+					error: null
+				});
+			}
+			/** Invalidate and reload the catalog after a Host-side model input changes. */
+			refresh() {
+				this.invalidate();
+				this.load().catch(() => {});
+			}
+			/** Clear Host-specific values and load the replacement Host generation. */
+			resetGeneration() {
+				this.reasoning.clear();
+				this.invalidate(true);
+				this.load().catch(() => {});
+			}
+		};
+		//#endregion
+		//#region lib/types/client/directory.js
+		/** One session's shared directory controller; disposed with the session scope. */
+		var ModelDirectory = class {
+			sessions;
+			sessionId;
+			available;
+			catalog;
+			projected;
+			isBlank;
+			track;
+			/** The shared snapshot both entries render from (uSES-safe store). */
+			store = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)({
+				current: null,
+				routable: null,
+				groups: [],
+				failures: [],
+				status: "idle",
+				pending: null,
+				error: null
+			});
+			/** Latest selection operation wins; an older response never overwrites a newer one. */
+			generation = 0;
+			disposed = false;
+			unsubscribeCatalog;
+			unsubscribeSelection;
+			/**
+			* @param sessions - the session wire face (captured from the plugin's root connection).
+			* @param sessionId - the owning session.
+			* @param available - whether this session may use Agent-bound model RPCs.
+			* @param catalog - Host-generation catalog shared by every Session.
+			* @param projected - durable model selection projected from Session history.
+			* @param isBlank - whether this Session has no first message yet.
+			* @param track - desktop-only callback after a successful user selection.
+			*/
+			constructor(sessions, sessionId, available, catalog, projected, isBlank, track) {
+				this.sessions = sessions;
+				this.sessionId = sessionId;
+				this.available = available;
+				this.catalog = catalog;
+				this.projected = projected;
+				this.isBlank = isBlank;
+				this.track = track;
+				this.unsubscribeCatalog = catalog.store.subscribe(() => {
+					this.syncInputs();
+				});
+				this.unsubscribeSelection = projected.subscribe(() => {
+					this.syncInputs();
+				});
+				this.syncInputs();
+			}
+			/**
+			* Ensure the Host generation's shared available catalog is loaded.
+			* @returns the fresh directory value.
+			*/
+			async load() {
+				this.assertAvailable();
+				await this.catalog.load();
+				this.syncInputs();
+				return this.store.getSnapshot();
+			}
+			/**
+			* Select the complete provider/model/reasoning selection. The durable
+			* projection frame updates the shared current; failures surface on the store
+			* and return with the operation so each entry can present its own failure.
+			* @param selection - provider, provider-owned model id, and optional adapter-owned effort.
+			* @returns the selection outcome, including the original Remote failure.
+			*/
+			async select(selection) {
+				this.assertAvailable();
+				const previous = this.store.getSnapshot().current;
+				const previousEffort = previous?.reasoningEffort ?? (previous === null ? void 0 : this.catalog.reasoningFor(previous)?.defaultEffort);
+				const nextEffort = selection.reasoningEffort ?? this.catalog.reasoningFor(selection)?.defaultEffort;
+				const generation = ++this.generation;
+				this.store.update((s) => {
+					s.status = "selecting";
+					s.pending = selection;
+					s.error = null;
+				});
+				const result = await this.sessions.selectModel({
+					sessionId: this.sessionId,
+					provider: selection.provider,
+					model: selection.model,
+					...selection.reasoningEffort === void 0 ? {} : { reasoningEffort: selection.reasoningEffort }
+				});
+				if (this.disposed || generation !== this.generation) return result.ok ? {
+					ok: true,
+					value: void 0
+				} : result;
+				if (!result.ok) {
+					this.store.update((s) => {
+						s.status = "error";
+						s.pending = null;
+						s.error = `${result.error.code}: ${result.error.message}`;
+					});
+					return result;
+				}
+				if (previous !== null) {
+					const from = `${previous.provider}/${previous.model}`;
+					const to = `${selection.provider}/${selection.model}`;
+					if (from !== to) this.track?.("model_switch", {
+						...this.isBlank() ? {} : { session_id: this.sessionId },
+						switch_from: from,
+						switch_to: to
+					});
+					if (from === to && previousEffort !== nextEffort) this.track?.("thinking_level_switch", {
+						...this.isBlank() ? {} : { session_id: this.sessionId },
+						model_name: to,
+						switch_from: previousEffort ?? "default",
+						switch_to: nextEffort ?? "default"
+					});
+				}
+				this.store.update((s) => {
+					s.status = "ready";
+					s.pending = null;
+					s.error = null;
+				});
+				this.syncInputs();
+				return {
+					ok: true,
+					value: void 0
+				};
+			}
+			/**
+			* Invalidate an in-flight selection response from the previous Host generation.
+			*/
+			resetConnected() {
+				if (this.disposed) return;
+				++this.generation;
+				this.store.update((state) => {
+					if (state.status === "selecting") state.status = "idle";
+					state.pending = null;
+					state.error = null;
+				});
+				this.syncInputs();
+			}
+			/** Scope teardown: late settlements lose write access to the store. */
+			dispose() {
+				this.disposed = true;
+				this.unsubscribeSelection();
+				this.unsubscribeCatalog();
+			}
+			assertAvailable() {
+				if (!this.available()) throw new Error("model selection is unavailable for addressed subagent sessions");
+			}
+			syncInputs() {
+				if (this.disposed) return;
+				const catalog = this.catalog.store.getSnapshot();
+				const projected = modelSelectionProjection(this.projected.getSnapshot());
+				const intended = projected?.next ?? catalog.value?.default;
+				const reasoning = intended === void 0 ? void 0 : this.catalog.reasoningFor(intended);
+				const effort = intended?.reasoningEffort ?? reasoning?.defaultEffort;
+				const retainedEffort = effort === void 0 ? void 0 : reasoning?.efforts.find((level) => level.id === effort)?.name ?? effort;
+				if (catalog.status !== "ready" || catalog.value === null || projected === void 0) {
+					this.store.set({
+						current: catalog.value === null ? null : this.store.getSnapshot().current,
+						...retainedEffort === void 0 ? {} : { retainedEffort },
+						routable: null,
+						groups: catalog.value?.groups ?? [],
+						failures: catalog.value?.failures ?? [],
+						status: catalog.status === "error" ? "error" : "loading",
+						pending: this.store.getSnapshot().pending,
+						error: catalog.error
+					});
+					return;
+				}
+				const selection = projected.next ?? catalog.value.default;
+				const routable = catalog.value.groups.some((group) => group.id === selection.provider && group.models.some((model) => model.id === selection.model));
+				this.store.set({
+					current: selection,
+					...retainedEffort === void 0 ? {} : { retainedEffort },
+					routable,
+					groups: catalog.value.groups,
+					failures: catalog.value.failures,
+					status: this.store.getSnapshot().status === "selecting" ? "selecting" : "ready",
+					pending: this.store.getSnapshot().pending,
+					error: null
+				});
+			}
+		};
+		function modelSelectionProjection(value) {
+			return value === void 0 ? void 0 : value;
+		}
+		//#endregion
+		//#region lib/types/client/service.js
+		/** The `ctx.modelDirectories` session model-selection service. */
+		var ModelDirectoryResolver = class extends _deepseek_ai_cordis.Service {
+			static inject = [
+				"sessions",
+				"remote",
+				"remote.session"
+			];
+			live = { directories: new WeakMapWithValues() };
+			catalog;
+			/**
+			* @param ctx - owning root context (the service registers itself as `models`).
+			*/
+			constructor(ctx) {
+				super(ctx, "modelDirectories");
+				this.catalog = new ModelCatalogDirectory(ctx);
+				this.catalog.load().catch(() => {});
+				ctx.on("connection/reset", () => {
+					this.catalog.resetGeneration();
+					for (const directory of this.live.directories.values) directory.resetConnected();
+				});
+				ctx.remote.$on("llm/adapters-updated", () => {
+					this.catalog.refresh();
+				});
+				ctx.remote.$on("llm/models-updated", () => {
+					this.catalog.refresh();
+				});
+				ctx.remote.$on("settings/document-updated", () => {
+					this.catalog.refresh();
+				});
+				ctx.remote.$on("credentials/record-updated", () => {
+					this.catalog.refresh();
+				});
+				ctx.remote.$on("credentials/reference-updated", () => {
+					this.catalog.refresh();
+				});
+			}
+			/**
+			* Resolve the per-session shared directory (lazy; the scope disposer
+			* removes and disposes it). Unknown sessions fail loud.
+			* @param sessionId - the owning session.
+			* @returns the resident directory both entries share.
+			*/
+			directoryFor(sessionId) {
+				const { live } = this;
+				const sessions = this.ctx.sessions;
+				const actx = sessions.scope(sessionId);
+				if (actx === void 0) throw new Error(`ui-model-selection: session "${String(sessionId)}" resolved no scope`);
+				const binding = sessions.binding(sessionId);
+				if (binding === void 0) throw new Error(`ui-model-selection: session "${String(sessionId)}" resolved no binding`);
+				const existing = live.directories.get(binding);
+				if (existing !== void 0) return existing;
+				const directory = new ModelDirectory(this.ctx.remote.session, sessionId, () => sessions.subagentAddress(sessionId) === void 0, this.catalog, binding.session.projections.faceOf("modelSelection"), () => binding.session.getSnapshot().blank, (name, attributes) => this.ctx.get("productAnalytics")?.track(name, attributes));
+				live.directories.set(binding, directory);
+				actx.effect(() => () => {
+					directory.dispose();
+					live.directories.delete(binding);
+				}, "ui-model-selection: session directory");
+				return directory;
+			}
+		};
+		//#endregion
+		//#region ../../../node_modules/.pnpm/clsx@2.1.1/node_modules/clsx/dist/clsx.mjs
+		function r(e) {
+			var t, f, n = "";
+			if ("string" == typeof e || "number" == typeof e) n += e;
+			else if ("object" == typeof e) if (Array.isArray(e)) {
+				var o = e.length;
+				for (t = 0; t < o; t++) e[t] && (f = r(e[t])) && (n && (n += " "), n += f);
+			} else for (f in e) e[f] && (n && (n += " "), n += f);
+			return n;
+		}
+		function clsx() {
+			for (var e, t, f = 0, n = "", o = arguments.length; f < o; f++) (e = arguments[f]) && (t = r(e)) && (n && (n += " "), n += t);
+			return n;
+		}
+		//#endregion
+		//#region \0dsh-css:D:\ci\runners\github\_work\deepseek-harness\deepseek-harness\packages\client\ui-model-selection\src\client\ModelSelect.module.css.mjs
+		const css = "._9r0rkG_root{min-width:0;position:relative}._9r0rkG_trigger{border-radius:var(--dsw-radius-sm);min-width:0;max-width:360px;height:28px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:0 0;border:none;outline:none;align-items:center;gap:4px;padding:0 4px 0 8px;font-size:13px;font-weight:400;line-height:20px;display:flex}@media (hover:hover){._9r0rkG_trigger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}}._9r0rkG_trigger:focus-visible:not([data-selection-focus]){box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}._9r0rkG_trigger:disabled{color:var(--dsw-alias-label-dimmed);cursor:default}._9r0rkG_triggerLabel{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}._9r0rkG_triggerEffort{text-overflow:ellipsis;white-space:nowrap;min-width:0;color:var(--dsw-alias-label-caption);flex-shrink:1000;overflow:hidden}._9r0rkG_triggerIcon{display:var(--dsh-composer-model-icon-display,none);flex:none}._9r0rkG_triggerLabel,._9r0rkG_triggerEffort{display:var(--dsh-composer-model-text-display,block)}._9r0rkG_chevron{color:var(--dsw-alias-label-caption);flex:none;transition:transform .12s}._9r0rkG_chevronOpen{transform:rotate(180deg)}._9r0rkG_menu{box-sizing:border-box;z-index:1100;width:max-content;min-width:min(240px, calc(100vw - 32px), var(--dsh-anchored-max-width,100vw));max-width:min(420px, calc(100vw - 32px), var(--dsh-anchored-max-width,100vw));max-height:min(360px, calc(100vh - 96px), var(--dsh-anchored-max-height,100vh));--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);border:0;flex-direction:column;padding:4px;display:flex;position:fixed;overflow:hidden}._9r0rkG_status,._9r0rkG_empty{color:var(--dsw-alias-label-tertiary);padding:8px;font-size:12px;line-height:18px}._9r0rkG_error,._9r0rkG_warning{border-radius:var(--dsw-radius-md);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:3px;padding:6px 7px;font-size:11px;line-height:16px;display:flex}._9r0rkG_warning{background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-state-warn-label)}._9r0rkG_retry{color:inherit;font:inherit;cursor:pointer;background:0 0;border:none;flex:none;padding:0;font-weight:600}._9r0rkG_searchRow{flex-shrink:0;margin:2px 0 3px;position:relative}._9r0rkG_searchRow ._9r0rkG_search{border-radius:var(--dsw-radius-md);background:0 0;border:0 solid #0000;height:auto;padding:5px 7px;display:flex}._9r0rkG_searchRow ._9r0rkG_searchWithQuery{padding-right:34px}._9r0rkG_searchClear{corner-shape:round;width:24px;height:24px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:0 0;border:none;border-radius:50%;justify-content:center;align-items:center;padding:0;display:inline-flex;position:absolute;top:50%;right:4px;transform:translateY(-50%)}._9r0rkG_searchClear:focus-visible{background:var(--dsw-alias-interactive-bg-hover);outline:none}@media (hover:hover){._9r0rkG_searchClear:hover{background:var(--dsw-alias-interactive-bg-hover);outline:none}}._9r0rkG_searchRow ._9r0rkG_search:focus-within{border-color:#0000}._9r0rkG_searchRow ._9r0rkG_search input{padding:0;font-size:12px;line-height:normal}@media (pointer:coarse){._9r0rkG_searchRow ._9r0rkG_search input{font-size:16px}}._9r0rkG_searchRow ._9r0rkG_search input::placeholder{color:var(--dsw-alias-label-caption)}._9r0rkG_groups:not([hidden]){min-height:0;overflow:hidden auto}._9r0rkG_option{box-sizing:border-box;border-radius:var(--dsw-radius-md);width:auto;min-width:100%;min-height:34px;color:inherit;text-align:left;cursor:pointer;background:0 0;border:none;outline:none;align-items:center;gap:6px;padding:5px 7px;display:flex}._9r0rkG_option:focus-visible,._9r0rkG_optionActive:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}._9r0rkG_modelOption{max-width:100%}@media (hover:hover){._9r0rkG_option:not(._9r0rkG_modelOption):hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}}._9r0rkG_selected{background:0 0}._9r0rkG_option:disabled{color:var(--dsw-alias-label-dimmed);cursor:default}._9r0rkG_optionCopy{flex-direction:column;flex:1;min-width:0;display:flex}._9r0rkG_modelName{color:inherit;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:400;line-height:18px;overflow:hidden}._9r0rkG_badgedName{vertical-align:baseline;white-space:nowrap;align-items:center;gap:4px;max-width:100%;display:inline-flex}._9r0rkG_badgedNameText{text-overflow:ellipsis;min-width:0;overflow:hidden}._9r0rkG_badge{flex:none}._9r0rkG_check{color:var(--dsw-alias-label-primary);flex:0 0 14px;place-items:center;display:grid}._9r0rkG_check svg{width:14px;height:14px}._9r0rkG_cell{box-sizing:border-box;border-radius:var(--dsw-radius-md);width:auto;min-width:100%;height:34px;color:var(--dsw-alias-label-primary);cursor:pointer;text-align:left;background:0 0;border:none;outline:none;align-items:center;gap:6px;padding:0 8px;font-size:13px;line-height:20px;display:flex}._9r0rkG_cell:focus-visible{background:var(--dsw-alias-interactive-bg-hover)}@media (hover:hover){._9r0rkG_cell:hover{background:var(--dsw-alias-interactive-bg-hover)}}._9r0rkG_cellLabel{white-space:nowrap;flex:none}._9r0rkG_cellValue{text-overflow:ellipsis;white-space:nowrap;text-align:right;min-width:0;color:var(--dsw-alias-label-tertiary);flex:auto;overflow:hidden}._9r0rkG_cellChevron{width:12px;height:12px;color:var(--dsw-alias-menu-icon);flex:none}";
+		const tagId = "@deepseek-ai/dsh-client-ui-model-selection/ModelSelect.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-model-selection";
+			tag.dataset.pluginCss = tagId;
+			tag.textContent = css;
+			document.head.appendChild(tag);
+		}
+		var ModelSelect_module_css_default = {
+			"badge": "_9r0rkG_badge",
+			"badgedName": "_9r0rkG_badgedName",
+			"badgedNameText": "_9r0rkG_badgedNameText",
+			"cell": "_9r0rkG_cell",
+			"cellChevron": "_9r0rkG_cellChevron",
+			"cellLabel": "_9r0rkG_cellLabel",
+			"cellValue": "_9r0rkG_cellValue",
+			"check": "_9r0rkG_check",
+			"chevron": "_9r0rkG_chevron",
+			"chevronOpen": "_9r0rkG_chevronOpen",
+			"empty": "_9r0rkG_empty",
+			"error": "_9r0rkG_error",
+			"groups": "_9r0rkG_groups",
+			"menu": "_9r0rkG_menu",
+			"modelName": "_9r0rkG_modelName",
+			"modelOption": "_9r0rkG_modelOption",
+			"option": "_9r0rkG_option",
+			"optionActive": "_9r0rkG_optionActive",
+			"optionCopy": "_9r0rkG_optionCopy",
+			"retry": "_9r0rkG_retry",
+			"root": "_9r0rkG_root",
+			"search": "_9r0rkG_search",
+			"searchClear": "_9r0rkG_searchClear",
+			"searchRow": "_9r0rkG_searchRow",
+			"searchWithQuery": "_9r0rkG_searchWithQuery",
+			"selected": "_9r0rkG_selected",
+			"status": "_9r0rkG_status",
+			"trigger": "_9r0rkG_trigger",
+			"triggerEffort": "_9r0rkG_triggerEffort",
+			"triggerIcon": "_9r0rkG_triggerIcon",
+			"triggerLabel": "_9r0rkG_triggerLabel",
+			"warning": "_9r0rkG_warning"
+		};
+		//#endregion
+		//#region lib/types/client/provider-order.js
+		/** Shared provider display order for the composer and command model pickers. */
+		/**
+		* Put the account and official providers first, preserving every other relative order.
+		* @param groups - Provider groups in catalog order.
+		* @returns a sorted copy; model order within each group is unchanged.
+		*/
+		function orderModelProviders(groups) {
+			return groups.toSorted((left, right) => (left.id === "deepseek-account" ? 0 : left.id === "deepseek-official" ? 1 : 2) - (right.id === "deepseek-account" ? 0 : right.id === "deepseek-official" ? 1 : 2));
+		}
+		//#endregion
+		//#region lib/types/client/ModelSelect.js
+		/**
+		* ModelSelect: the composer's named model seat (`conversation.input.model`).
+		* Two-level selection per figma 496:26454's MenuDropdown: the root menu is
+		* the Model / Effort row pair (label + current value + a right chevron),
+		* each drilling into its own list — the provider-grouped model list over
+		* the shared directory, and the effort levels. The trigger (313:14108's
+		* ToggleButton) shows both: model name + effort in the caption tone.
+		* Model catalogs above four entries show search, which retains focus while
+		* ↑/↓ cycle the highlighted result; Enter and Tab accept it. Smaller model
+		* catalogs, root panes, and effort panes move focus between rows. Escape and Shift+Tab leave a drilled pane first and otherwise close
+		* back to the trigger. A drilled pane focuses the current effort or model
+		* search field. Provider headings paint their background only while pinned
+		* by scrolling. Clearing a query restores the full list and search focus.
+		* Selecting restores trigger focus without a ring until the trigger loses focus
+		* or the menu reopens. Mobile devices restore button focus when opening or
+		* drilling; model search takes focus only after explicit user input.
+		* Model names match a case-insensitive ordered subsequence
+		* within each provider group, ranked by
+		* prefix, alignment score, then catalog order. Returning to the root pane
+		* hands focus back to the cell that opened it. Data and submission ride the
+		* same per-session ModelDirectory as the /model popup; exact-model reasoning
+		* metadata and the selected effort come from the Host rather than a
+		* client-owned vocabulary. A rejected selection announces through the shared
+		* transient Toast anchored to the composer card; the in-menu strip with
+		* Retry remains the catalog-load surface. While the directory's pending
+		* selection is unsettled, the trigger shows a spinner in place of its
+		* chevron, and each row whose value that selection carries shows one in place
+		* of its check mark.
+		*/
+		/** Unplaced portal card: hidden but laid out at a fixed origin so offsetWidth/offsetHeight are real (Menu primitive's measure pass). */
+		const MEASURE_STYLE = {
+			visibility: "hidden",
+			left: 0,
+			top: 0
+		};
+		/**
+		* Render the composer model seat.
+		* @param props - owner share (locked) + injected face (shared directory
+		* store/verbs) + the standard locale seat.
+		* @returns the trigger and, while open, the two-level menu.
+		*/
+		function ModelSelect({ locked, available, directory, load, select, resolveText, t, renderSlot }) {
+			const state = (0, react.useSyncExternalStore)((fn) => directory.subscribe(fn), () => directory.getSnapshot());
+			const [open, setOpen] = (0, react.useState)(false);
+			const [pane, setPane] = (0, react.useState)("root");
+			const [query, setQuery] = (0, react.useState)("");
+			const [highlightedIndex, setHighlightedIndex] = (0, react.useState)(null);
+			const [selectionFocus, setSelectionFocus] = (0, react.useState)(false);
+			const lastActionRef = (0, react.useRef)("load");
+			const [toast, setToast] = (0, react.useState)(null);
+			const toastSeq = (0, react.useRef)(0);
+			const rootRef = (0, react.useRef)(null);
+			const triggerRef = (0, react.useRef)(null);
+			const searchRef = (0, react.useRef)(null);
+			const menuRef = (0, react.useRef)(null);
+			const groupsRef = (0, react.useRef)(null);
+			const menuPos = (0, _deepseek_ai_dsh_client_ui_primitives.useAnchoredPosition)({
+				open: open && available,
+				anchorRef: triggerRef,
+				panelRef: menuRef,
+				side: "top",
+				align: "end",
+				gap: 8,
+				margin: 12,
+				layoutKey: pane
+			});
+			const itemRefs = (0, react.useRef)([]);
+			const id = (0, react.useId)();
+			const accountProviderName = t("provider.account");
+			const groups = (0, react.useMemo)(() => orderModelProviders(state.groups).map((group) => ({
+				...group,
+				provider: {
+					id: group.id,
+					name: group.id === "deepseek-account" ? accountProviderName : group.name
+				}
+			})), [state.groups, accountProviderName]);
+			const choices = (0, react.useMemo)(() => groups.flatMap((group) => group.models.map((model) => ({
+				group,
+				model,
+				selection: {
+					provider: group.id,
+					model: model.id,
+					...model.reasoning?.defaultEffort === void 0 ? {} : { reasoningEffort: model.reasoning.defaultEffort }
+				}
+			}))), [groups]);
+			const showSearch = choices.length > 4;
+			const filteredGroups = (0, react.useMemo)(() => groups.map((group) => ({
+				...group,
+				models: (0, _deepseek_ai_dsh_client_ui_primitives.rankByName)(group.models, showSearch ? query.trim() : "")
+			})).filter((group) => group.models.length > 0), [
+				groups,
+				query,
+				showSearch
+			]);
+			const visibleModels = (0, react.useMemo)(() => filteredGroups.flatMap((group) => group.models.map((model) => ({
+				provider: group.id,
+				model: model.id
+			}))), [filteredGroups]);
+			const currentVisibleIndex = visibleModels.findIndex((model) => model.provider === state.current?.provider && model.model === state.current.model);
+			const activeModelIndex = Math.min(highlightedIndex ?? Math.max(0, currentVisibleIndex), visibleModels.length - 1);
+			const currentChoice = choices[state.current === null ? -1 : choices.findIndex((c) => c.selection.provider === state.current?.provider && c.selection.model === state.current.model)];
+			const reasoning = currentChoice?.model.reasoning;
+			const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort;
+			const effortLabel = currentChoice === void 0 ? void 0 : reasoning === void 0 ? state.retainedEffort : effectiveEffort === void 0 ? t("effort.providerDefault") : reasoning.efforts.find((level) => level.id === effectiveEffort)?.name ?? effectiveEffort;
+			const effortChoices = (0, react.useMemo)(() => reasoning === void 0 ? [] : [...reasoning.defaultEffort === void 0 ? [{
+				key: "provider-default",
+				effort: void 0,
+				label: t("effort.providerDefault")
+			}] : [], ...reasoning.efforts.map((effort) => ({
+				key: `effort:${effort.id}`,
+				effort: effort.id,
+				label: effort.name
+			}))], [reasoning, t]);
+			const { pending } = state;
+			const busy = pending !== null;
+			const reload = () => {
+				lastActionRef.current = "load";
+				load();
+			};
+			(0, react.useEffect)(() => {
+				if (!open) return;
+				const closeOutside = (event) => {
+					if (rootRef.current?.contains(event.target) === true) return;
+					if (menuRef.current?.contains(event.target) === true) return;
+					setOpen(false);
+				};
+				document.addEventListener("mousedown", closeOutside);
+				return () => {
+					document.removeEventListener("mousedown", closeOutside);
+				};
+			}, [open]);
+			(0, react.useLayoutEffect)(() => {
+				if (!showSearch) {
+					setQuery("");
+					setHighlightedIndex(null);
+				}
+			}, [showSearch]);
+			const paneFocus = (0, react.useRef)(null);
+			const previousShowSearch = (0, react.useRef)(showSearch);
+			(0, react.useEffect)(() => {
+				const changedSearchMode = previousShowSearch.current !== showSearch;
+				previousShowSearch.current = showSearch;
+				const intent = paneFocus.current ?? (changedSearchMode && pane === "model" ? "drill" : null);
+				paneFocus.current = null;
+				if (!open || intent === null) return;
+				if (intent === "drill") {
+					if (pane === "model" && showSearch && !(0, _deepseek_ai_dsh_client_ui_primitives.isMobileDevice)()) {
+						searchRef.current?.focus();
+						return;
+					}
+					(menuRef.current?.querySelector("[role=\"menuitemradio\"][aria-checked=\"true\"]:not([disabled])") ?? itemRefs.current.find((item) => item !== null && !item.disabled) ?? triggerRef.current)?.focus();
+					return;
+				}
+				const cell = itemRefs.current[intent === "effort" ? 1 : 0];
+				(cell !== null && cell !== void 0 && !cell.disabled ? cell : triggerRef.current)?.focus();
+			}, [
+				open,
+				pane,
+				showSearch
+			]);
+			(0, react.useEffect)(() => {
+				const viewport = groupsRef.current;
+				if (viewport === null) return;
+				return (0, _deepseek_ai_dsh_client_ui_primitives.observeStickyMenuGroups)(viewport);
+			}, [
+				available,
+				open,
+				pane,
+				filteredGroups
+			]);
+			(0, react.useLayoutEffect)(() => {
+				if (open && pane === "model" && activeModelIndex >= 0) itemRefs.current[activeModelIndex]?.scrollIntoView({ block: "nearest" });
+			}, [
+				open,
+				pane,
+				activeModelIndex,
+				visibleModels
+			]);
+			if (!available) return null;
+			const show = () => {
+				setSelectionFocus(false);
+				triggerRef.current?.focus();
+				setQuery("");
+				setHighlightedIndex(null);
+				if (currentChoice === void 0) paneFocus.current = "drill";
+				setPane(currentChoice === void 0 ? "model" : "root");
+				setOpen(true);
+				reload();
+			};
+			const changeQuery = (next) => {
+				setQuery(next);
+				setHighlightedIndex(0);
+			};
+			const close = (restoreFocus = false) => {
+				setOpen(false);
+				setPane("root");
+				if (restoreFocus) queueMicrotask(() => {
+					triggerRef.current?.focus();
+				});
+			};
+			const closeAfterSelection = () => {
+				setSelectionFocus(true);
+				close(true);
+			};
+			const drill = (next) => {
+				setQuery("");
+				setHighlightedIndex(null);
+				paneFocus.current = "drill";
+				setPane(next);
+			};
+			/** Leave a drilled pane for the root one, handing the keyboard back to its cell. */
+			const back = (from) => {
+				paneFocus.current = from;
+				setPane("root");
+			};
+			const moveFocus = (offset) => {
+				const items = itemRefs.current.filter((item) => item !== null);
+				if (items.length === 0) return;
+				const active = items.findIndex((item) => item === document.activeElement);
+				items[active === -1 ? offset > 0 ? 0 : items.length - 1 : (active + offset + items.length) % items.length]?.focus();
+			};
+			const onRootKeyDown = (event) => {
+				if (event.nativeEvent.isComposing) return;
+				if (event.key === "Escape" && open) {
+					event.preventDefault();
+					if (pane !== "root" && currentChoice !== void 0) back(pane);
+					else close(true);
+					return;
+				}
+				if (!open) return;
+				if (pane === "model" && showSearch && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+					event.preventDefault();
+					if (!busy && visibleModels.length > 0) {
+						setHighlightedIndex((activeModelIndex + (event.key === "ArrowDown" ? 1 : -1) + visibleModels.length) % visibleModels.length);
+						searchRef.current?.focus();
+					}
+					return;
+				}
+				if (pane === "model" && showSearch && event.target instanceof HTMLInputElement && (event.key === "Enter" || event.key === "Tab" && !event.shiftKey)) {
+					if (event.key === "Tab" && visibleModels.length === 0) return;
+					event.preventDefault();
+					const highlighted = visibleModels[activeModelIndex];
+					if (!busy && highlighted !== void 0) choose(highlighted);
+					return;
+				}
+				if (event.key === "Tab") {
+					if (event.shiftKey) {
+						event.preventDefault();
+						if (pane !== "root" && currentChoice !== void 0) back(pane);
+						else close(true);
+						return;
+					}
+					const focused = document.activeElement;
+					const rows = itemRefs.current.filter((item) => item !== null);
+					if (focused instanceof HTMLButtonElement && rows.includes(focused)) {
+						event.preventDefault();
+						focused.click();
+						return;
+					}
+					if (focused !== triggerRef.current) return;
+					event.preventDefault();
+					if (pane === "model" && showSearch) {
+						setHighlightedIndex(null);
+						searchRef.current?.focus();
+						return;
+					}
+					(menuRef.current?.querySelector("[role=\"menuitemradio\"][aria-checked=\"true\"]:not([disabled])") ?? rows.find((item) => !item.disabled))?.focus();
+					return;
+				}
+				if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+					event.preventDefault();
+					moveFocus(event.key === "ArrowDown" ? 1 : -1);
+				}
+			};
+			const onBlur = (event) => {
+				if (event.relatedTarget instanceof Node && (rootRef.current?.contains(event.relatedTarget) === true || menuRef.current?.contains(event.relatedTarget) === true)) return;
+				close();
+			};
+			const settleSelection = (result) => {
+				if (result === void 0) return;
+				if (result.ok) {
+					if (rootRef.current !== null) closeAfterSelection();
+					return;
+				}
+				const { error } = result;
+				toastSeq.current += 1;
+				setToast({
+					seq: toastSeq.current,
+					text: error.code === "session/writer-held" ? t("error.sessionInUse") : t("error.action", { message: `${error.code}: ${error.message}` })
+				});
+			};
+			const submit = (selection) => {
+				lastActionRef.current = "select";
+				setSelectionFocus(true);
+				triggerRef.current?.focus();
+				select(selection).then(settleSelection);
+			};
+			const choose = (selection) => {
+				if (state.current?.provider === selection.provider && state.current.model === selection.model) {
+					closeAfterSelection();
+					return;
+				}
+				submit(selection);
+			};
+			const chooseEffort = (effort) => {
+				if (state.current === null) return;
+				if (effectiveEffort === effort) {
+					closeAfterSelection();
+					return;
+				}
+				submit({
+					provider: state.current.provider,
+					model: state.current.model,
+					...effort === void 0 ? {} : { reasoningEffort: effort }
+				});
+			};
+			const waiting = currentChoice === void 0 && state.status === "loading";
+			const modelLabel = waiting ? t("trigger.loading") : currentChoice?.model.name ?? t("trigger.fallback");
+			const triggerLabel = effortLabel === void 0 ? modelLabel : `${modelLabel} · ${effortLabel}`;
+			const triggerAria = waiting ? t("trigger.loading") : currentChoice === void 0 ? t("trigger.selectAria") : effortLabel === void 0 ? t("trigger.aria", { model: modelLabel }) : t("trigger.ariaEffort", {
+				model: modelLabel,
+				effort: effortLabel
+			});
+			const renderModelLabel = (provider, model, placement, selected) => (0, react_jsx_runtime.jsx)("span", {
+				"data-provider-id": provider.id,
+				"data-model-id": model.id,
+				children: renderSlot("conversation.input.model.label", {
+					provider,
+					model,
+					placement,
+					selected
+				}, { fallback: (function () {
+					// 目录倍率后缀：连接器写在名字里的 ` · x<rate>` 约定，官方不认，
+					// 所以在这里剥出来单独画。剥不掉就原样显示，绝不猜。
+					const __raw = String(model.name == null ? "" : model.name);
+					const __m = / \u00b7 x(\d+(?:\.\d+)?)$/u.exec(__raw);
+					const __base = __m ? __raw.slice(0, __m.index) : __raw;
+					const __rate = __m ? Number(__m[1]) : null;
+					const __name = (0, react_jsx_runtime.jsx)("span", {
+						className: ModelSelect_module_css_default.badgedNameText,
+						children: __base
+					});
+					const __chip = __rate === null ? null : (0, react_jsx_runtime.jsx)("span", {
+						"data-catalog-rate": String(__rate),
+						style: {
+							flex: "none", fontSize: "9.5px", lineHeight: "15px", padding: "0 5px",
+							borderRadius: "7px", marginInlineStart: "4px",
+							fontFamily: "ui-monospace, Consolas, monospace", whiteSpace: "nowrap",
+							color: __rate === 0 ? "var(--dsw-alias-state-success-primary, #3fb950)" : "var(--dsw-alias-label-caption, #8b949e)",
+							background: __rate === 0 ? "rgba(63,185,80,.14)" : "transparent",
+							border: "1px solid " + (__rate === 0 ? "rgba(63,185,80,.45)" : "var(--dsw-alias-border-l1, rgba(128,128,128,.35))")
+						},
+						children: "x" + __rate
+					});
+					const __badge = model.badge === void 0 ? null : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tag, {
+						className: ModelSelect_module_css_default.badge,
+						tone: model.badge.tone,
+						children: resolveText(model.badge.text)
+					});
+					// 位置约定与官方一致：输入框里徽章在前，菜单里在后。
+					const __kids = placement === "trigger"
+						? [__badge, __badge === null ? null : " ", __name, __chip]
+						: [__name, __chip, __badge === null ? null : " ", __badge];
+					return (0, react_jsx_runtime.jsxs)("span", {
+						className: ModelSelect_module_css_default.badgedName,
+						children: __kids.filter(Boolean)
+					});
+				})() })
+			});
+			let itemIndex = 0;
+			let modelIndex = 0;
+			const itemRef = () => {
+				const at = itemIndex++;
+				return (node) => {
+					itemRefs.current[at] = node;
+				};
+			};
+			return (0, react_jsx_runtime.jsxs)("div", {
+				ref: rootRef,
+				className: ModelSelect_module_css_default.root,
+				onKeyDown: onRootKeyDown,
+				onBlur,
+				onMouseDown: (event) => {
+					if (event.target instanceof Element && event.target.closest("button") !== null) event.preventDefault();
+				},
+				children: [
+					(0, react_jsx_runtime.jsxs)("button", {
+						ref: triggerRef,
+						type: "button",
+						className: ModelSelect_module_css_default.trigger,
+						"aria-label": triggerAria,
+						"aria-haspopup": "menu",
+						"aria-expanded": open,
+						"aria-controls": open ? `${id}-menu` : void 0,
+						title: triggerLabel,
+						"aria-busy": busy,
+						"data-selection-focus": selectionFocus ? "" : void 0,
+						onBlur: () => {
+							setSelectionFocus(false);
+						},
+						disabled: locked,
+						onClick: () => {
+							if (open) close(true);
+							else show();
+						},
+						children: [
+							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconDataOutlineRegular, {
+								className: ModelSelect_module_css_default.triggerIcon,
+								size: 16
+							}),
+							(0, react_jsx_runtime.jsx)("span", {
+								className: ModelSelect_module_css_default.triggerLabel,
+								children: currentChoice === void 0 ? modelLabel : renderModelLabel(currentChoice.group.provider, currentChoice.model, "trigger", true)
+							}),
+							effortLabel !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+								className: ModelSelect_module_css_default.triggerEffort,
+								children: effortLabel
+							}),
+							busy ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutlineRegular, { className: clsx(ModelSelect_module_css_default.chevron, open && ModelSelect_module_css_default.chevronOpen) })
+						]
+					}),
+					open && (0, react_dom.createPortal)((0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.MenuSurface, {
+						ref: menuRef,
+						id: `${id}-menu`,
+						className: ModelSelect_module_css_default.menu,
+						style: menuPos ?? MEASURE_STYLE,
+						role: pane === "model" ? "group" : "menu",
+						"aria-label": t("menu.aria"),
+						"aria-busy": state.status === "loading" || busy,
+						children: [
+							pane === "root" && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsxs)("button", {
+								ref: itemRef(),
+								type: "button",
+								role: "menuitem",
+								className: ModelSelect_module_css_default.cell,
+								onClick: () => {
+									drill("model");
+								},
+								children: [
+									(0, react_jsx_runtime.jsx)("span", {
+										className: ModelSelect_module_css_default.cellLabel,
+										children: t("menu.model")
+									}),
+									(0, react_jsx_runtime.jsx)("span", {
+										className: ModelSelect_module_css_default.cellValue,
+										children: currentChoice === void 0 ? modelLabel : renderModelLabel(currentChoice.group.provider, currentChoice.model, "menu", true)
+									}),
+									(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutlineRegular, { className: ModelSelect_module_css_default.cellChevron })
+								]
+							}), reasoning !== void 0 && (0, react_jsx_runtime.jsxs)("button", {
+								ref: itemRef(),
+								type: "button",
+								role: "menuitem",
+								className: ModelSelect_module_css_default.cell,
+								onClick: () => {
+									drill("effort");
+								},
+								children: [
+									(0, react_jsx_runtime.jsx)("span", {
+										className: ModelSelect_module_css_default.cellLabel,
+										children: t("menu.effort")
+									}),
+									(0, react_jsx_runtime.jsx)("span", {
+										className: ModelSelect_module_css_default.cellValue,
+										children: effortLabel
+									}),
+									(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutlineRegular, { className: ModelSelect_module_css_default.cellChevron })
+								]
+							})] }),
+							pane === "model" && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+								showSearch && (0, react_jsx_runtime.jsxs)("div", {
+									className: ModelSelect_module_css_default.searchRow,
+									children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+										ref: searchRef,
+										className: clsx(ModelSelect_module_css_default.search, query !== "" && ModelSelect_module_css_default.searchWithQuery),
+										type: "text",
+										role: "searchbox",
+										"aria-label": t("search.placeholder"),
+										"aria-controls": `${id}-models`,
+										"aria-activedescendant": activeModelIndex < 0 ? void 0 : `${id}-model-${activeModelIndex}`,
+										placeholder: t("search.placeholder"),
+										value: query,
+										readOnly: busy,
+										onChange: (event) => {
+											changeQuery(event.target.value);
+										}
+									}), query !== "" && (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: ModelSelect_module_css_default.searchClear,
+										"aria-label": t("search.clear"),
+										disabled: busy,
+										onClick: () => {
+											changeQuery("");
+											searchRef.current?.focus();
+										},
+										children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCloseFillRegular, {})
+									})]
+								}),
+								state.status === "loading" && (0, react_jsx_runtime.jsx)("div", {
+									className: ModelSelect_module_css_default.status,
+									children: t("status.loading")
+								}),
+								state.error !== null && lastActionRef.current === "load" && (0, react_jsx_runtime.jsxs)("div", {
+									className: ModelSelect_module_css_default.error,
+									children: [(0, react_jsx_runtime.jsx)("span", { children: t("error.action", { message: state.error }) }), (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: ModelSelect_module_css_default.retry,
+										onClick: reload,
+										children: t("retry")
+									})]
+								}),
+								state.failures.map((failure) => (0, react_jsx_runtime.jsxs)("div", {
+									className: ModelSelect_module_css_default.warning,
+									children: [(0, react_jsx_runtime.jsx)("span", { children: t("warning.groupLoad", {
+										name: failure.id === "deepseek-account" ? t("provider.account") : failure.name,
+										message: failure.message
+									}) }), (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: ModelSelect_module_css_default.retry,
+										onClick: reload,
+										children: t("retry")
+									})]
+								}, failure.id)),
+								(0, react_jsx_runtime.jsx)("div", {
+									ref: groupsRef,
+									id: `${id}-models`,
+									className: clsx(ModelSelect_module_css_default.groups, "scrollable"),
+									role: "menu",
+									"aria-label": t("menu.model"),
+									hidden: filteredGroups.length === 0,
+									children: filteredGroups.map((group) => {
+										return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.MenuGroup, {
+											label: group.provider.name,
+											children: group.models.map((model) => {
+												const index = modelIndex++;
+												const selected = state.current?.provider === group.id && state.current.model === model.id;
+												return (0, react_jsx_runtime.jsxs)("button", {
+													ref: itemRef(),
+													type: "button",
+													role: "menuitemradio",
+													"aria-checked": selected,
+													id: `${id}-model-${index}`,
+													tabIndex: showSearch ? -1 : 0,
+													onFocus: () => {
+														setHighlightedIndex(index);
+													},
+													"data-highlighted": index === activeModelIndex ? "" : void 0,
+													className: clsx(ModelSelect_module_css_default.option, ModelSelect_module_css_default.modelOption, selected && ModelSelect_module_css_default.selected, index === activeModelIndex && ModelSelect_module_css_default.optionActive),
+													onMouseMove: busy || index === activeModelIndex ? void 0 : () => {
+														if (showSearch) setHighlightedIndex(index);
+														else itemRefs.current[index]?.focus();
+													},
+													title: model.name,
+													disabled: busy,
+													onClick: () => {
+														choose({
+															provider: group.id,
+															model: model.id
+														});
+													},
+													children: [(0, react_jsx_runtime.jsx)("span", {
+														className: ModelSelect_module_css_default.optionCopy,
+														children: (0, react_jsx_runtime.jsx)("span", {
+															className: ModelSelect_module_css_default.modelName,
+															children: renderModelLabel(group.provider, model, "option", selected)
+														})
+													}), (0, react_jsx_runtime.jsx)("span", {
+														className: ModelSelect_module_css_default.check,
+														children: pending?.provider === group.id && pending.model === model.id ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }) : selected ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCheckOutlineRegular, {}) : null
+													})]
+												}, model.id);
+											})
+										}, group.id);
+									})
+								}),
+								state.status === "ready" && filteredGroups.length === 0 && (0, react_jsx_runtime.jsx)("div", {
+									className: ModelSelect_module_css_default.empty,
+									role: "status",
+									children: t(choices.length === 0 ? "empty.models" : "search.empty")
+								})
+							] }),
+							pane === "effort" && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [state.error !== null && lastActionRef.current === "load" && (0, react_jsx_runtime.jsxs)("div", {
+								className: ModelSelect_module_css_default.error,
+								children: [(0, react_jsx_runtime.jsx)("span", { children: t("error.action", { message: state.error }) }), (0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: ModelSelect_module_css_default.retry,
+									onClick: reload,
+									children: t("action.reload")
+								})]
+							}), (0, react_jsx_runtime.jsx)("div", {
+								className: clsx(ModelSelect_module_css_default.groups, "scrollable"),
+								children: effortChoices.length === 0 ? (0, react_jsx_runtime.jsx)("div", {
+									className: ModelSelect_module_css_default.empty,
+									children: t("empty.efforts")
+								}) : effortChoices.map((level) => (0, react_jsx_runtime.jsxs)("button", {
+									ref: itemRef(),
+									type: "button",
+									role: "menuitemradio",
+									"aria-checked": effectiveEffort === level.effort,
+									className: clsx(ModelSelect_module_css_default.option, effectiveEffort === level.effort && ModelSelect_module_css_default.selected),
+									disabled: busy,
+									onClick: () => {
+										chooseEffort(level.effort);
+									},
+									children: [(0, react_jsx_runtime.jsx)("span", {
+										className: ModelSelect_module_css_default.optionCopy,
+										children: (0, react_jsx_runtime.jsx)("span", {
+											className: ModelSelect_module_css_default.modelName,
+											children: level.label
+										})
+									}), (0, react_jsx_runtime.jsx)("span", {
+										className: ModelSelect_module_css_default.check,
+										children: pending !== null && pending.provider === state.current?.provider && pending.model === state.current.model && pending.reasoningEffort === level.effort ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }) : effectiveEffort === level.effort ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCheckOutlineRegular, {}) : null
+									})]
+								}, level.key))
+							})] })
+						]
+					}), document.body),
+					toast !== null && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Toast, {
+						text: toast.text,
+						icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconWarningOutlineRegular, {}),
+						anchor: rootRef.current?.closest("[data-composer-card]") ?? null,
+						onDone: () => {
+							setToast(null);
+						}
+					}, toast.seq)
+				]
+			});
+		}
+		//#endregion
+		//#region lib/types/client/locales.js
+		/**
+		* `model` namespace dictionaries.
+		*
+		* `trigger.selectAria` intentionally matches `trigger.fallback` but remains a
+		* separate key: the visible fallback label and the accessible name of
+		* an unset trigger are free to diverge per locale, and folding it into
+		* `trigger.aria` would announce the degenerate "Select model, current Select
+		* model".
+		*/
+		/** Simplified Chinese dictionary (the key-set source of truth). */
+		const zh = {
+			"provider.account": "DeepSeek 账号",
+			"command.label": "模型",
+			"command.description": "选择本会话使用的模型",
+			"option.loadError": "目录加载失败：{message}",
+			"trigger.fallback": "请选择模型",
+			"trigger.loading": "正在加载模型…",
+			"trigger.selectAria": "请选择模型",
+			"trigger.aria": "选择模型，当前 {model}",
+			"trigger.ariaEffort": "选择模型，当前 {model}，推理等级 {effort}",
+			"menu.aria": "模型与推理等级",
+			"menu.model": "模型",
+			"menu.effort": "推理等级",
+			"effort.providerDefault": "Default",
+			"status.loading": "正在刷新模型列表…",
+			"error.action": "模型操作失败：{message}",
+			"error.sessionInUse": "当前会话已被占用，可能是其他正在运行的 DSH 导致的（如其他 dsh web、桌面端），请退出其他正在运行的 DSH 后重试。",
+			"action.reload": "重新加载",
+			"warning.groupLoad": "{name} 加载失败：{message}",
+			"search.placeholder": "搜索模型…",
+			"search.clear": "清除搜索",
+			"search.empty": "没有匹配的模型。",
+			"empty.models": "暂无可用模型",
+			"empty.efforts": "当前模型未提供推理等级。"
+		};
+		/** English dictionary, checked complete against the zh key set. */
+		const en = {
+			"provider.account": "DeepSeek Account",
+			"command.label": "Model",
+			"command.description": "Select the model for this conversation",
+			"option.loadError": "Catalog failed to load: {message}",
+			"trigger.fallback": "Select model",
+			"trigger.loading": "Loading models…",
+			"trigger.selectAria": "Select model",
+			"trigger.aria": "Select model, current {model}",
+			"trigger.ariaEffort": "Select model, current {model}, reasoning effort {effort}",
+			"menu.aria": "Model and reasoning effort",
+			"menu.model": "Model",
+			"menu.effort": "Effort",
+			"effort.providerDefault": "Default",
+			"status.loading": "Refreshing model list…",
+			"error.action": "Model operation failed: {message}",
+			"error.sessionInUse": "This session is already in use, possibly by another running DSH instance (such as dsh web or the desktop app). Quit other running DSH instances and try again.",
+			"action.reload": "Reload",
+			"warning.groupLoad": "{name} failed to load: {message}",
+			"search.placeholder": "Search models…",
+			"search.clear": "Clear search",
+			"search.empty": "No matching models.",
+			"empty.models": "No models available.",
+			"empty.efforts": "This model provides no reasoning effort levels."
+		};
+		/** Japanese copy, checked against the English keys. */
+		const ja = {
+			"provider.account": "DeepSeek アカウント",
+			"command.label": "モデル",
+			"command.description": "この会話で使用するモデルを選択",
+			"option.loadError": "カタログの読み込みに失敗しました: {message}",
+			"trigger.fallback": "モデルを選択",
+			"trigger.loading": "モデルを読み込み中…",
+			"trigger.selectAria": "モデルを選択",
+			"trigger.aria": "モデルを選択、現在 {model}",
+			"trigger.ariaEffort": "モデルを選択、現在 {model}、推論強度 {effort}",
+			"menu.aria": "モデルと推論強度",
+			"menu.model": "モデル",
+			"menu.effort": "強度",
+			"effort.providerDefault": "デフォルト",
+			"status.loading": "モデル一覧を更新中…",
+			"error.action": "モデル操作に失敗しました: {message}",
+			"error.sessionInUse": "このセッションは既に使用中です。別の DSH インスタンス（dsh web やデスクトップアプリなど）が実行中の可能性があります。他の DSH インスタンスを終了してから再試行してください。",
+			"action.reload": "再読み込み",
+			"warning.groupLoad": "{name} の読み込みに失敗しました: {message}",
+			"search.placeholder": "モデルを検索…",
+			"search.clear": "検索をクリア",
+			"search.empty": "一致するモデルがありません。",
+			"empty.models": "利用可能なモデルがありません。",
+			"empty.efforts": "このモデルには推論強度の設定がありません。"
+		};
+		/** Spanish dictionary, checked against the English keys. */
+		const es = {
+			"provider.account": "Cuenta DeepSeek",
+			"command.label": "modelo",
+			"command.description": "Selecciona el modelo para esta conversación",
+			"option.loadError": "No se pudo cargar el catálogo: {message}",
+			"trigger.fallback": "Seleccionar modelo",
+			"trigger.loading": "Cargando modelos…",
+			"trigger.selectAria": "Seleccionar modelo",
+			"trigger.aria": "Seleccionar modelo, actual {model}",
+			"trigger.ariaEffort": "Seleccionar modelo, {model} actual, esfuerzo de razonamiento {effort}",
+			"menu.aria": "Esfuerzo de modelo y razonamiento.",
+			"menu.model": "modelo",
+			"menu.effort": "Esfuerzo",
+			"effort.providerDefault": "Predeterminado",
+			"status.loading": "Lista de modelos refrescante...",
+			"error.action": "Error en la operación del modelo: {message}",
+			"error.sessionInUse": "Esta sesión ya está en uso, posiblemente por otra instancia de DSH en ejecución (como la web dsh o la aplicación de escritorio). Salga de otras instancias de DSH en ejecución y vuelva a intentarlo.",
+			"action.reload": "recargar",
+			"warning.groupLoad": "{name} no pudo cargar: {message}",
+			"search.placeholder": "Buscar modelos…",
+			"search.clear": "Borrar búsqueda",
+			"search.empty": "No hay modelos coincidentes.",
+			"empty.models": "No hay modelos disponibles.",
+			"empty.efforts": "Este modelo no proporciona niveles de esfuerzo de razonamiento."
+		};
+		/** French dictionary, checked against the English keys. */
+		const fr = {
+			"provider.account": "Compte DeepSeek",
+			"command.label": "Modèle",
+			"command.description": "Sélectionnez le modèle pour cette conversation",
+			"option.loadError": "Échec du chargement du catalogue\xA0: {message}",
+			"trigger.fallback": "Sélectionnez le modèle",
+			"trigger.loading": "Chargement des modèles…",
+			"trigger.selectAria": "Sélectionnez le modèle",
+			"trigger.aria": "Sélectionnez le modèle, {model} actuel",
+			"trigger.ariaEffort": "Sélectionnez le modèle, {model} actuel, effort de raisonnement {effort}",
+			"menu.aria": "Effort de modélisation et de raisonnement",
+			"menu.model": "Modèle",
+			"menu.effort": "Effort",
+			"effort.providerDefault": "Par défaut",
+			"status.loading": "Liste des modèles actualisée…",
+			"error.action": "Échec de l'opération du modèle\xA0: {message}",
+			"error.sessionInUse": "Cette session est déjà utilisée, éventuellement par une autre instance DSH en cours d'exécution (telle que le Web dsh ou l'application de bureau). Quittez les autres instances DSH en cours d'exécution et réessayez.",
+			"action.reload": "Recharger",
+			"warning.groupLoad": "Échec du chargement de {name}\xA0: {message}",
+			"search.placeholder": "Rechercher des modèles…",
+			"search.clear": "Effacer la recherche",
+			"search.empty": "Aucun modèle correspondant.",
+			"empty.models": "Aucun modèle disponible.",
+			"empty.efforts": "Ce modèle ne fournit aucun niveau d’effort de raisonnement."
+		};
+		/** German dictionary, checked against the English keys. */
+		const de = {
+			"provider.account": "DeepSeek-Konto",
+			"command.label": "Modell",
+			"command.description": "Wählen Sie das Modell für dieses Gespräch aus",
+			"option.loadError": "Katalog konnte nicht geladen werden: {message}",
+			"trigger.fallback": "Modell auswählen",
+			"trigger.loading": "Modelle werden geladen…",
+			"trigger.selectAria": "Modell auswählen",
+			"trigger.aria": "Modell auswählen, aktuell {model}",
+			"trigger.ariaEffort": "Modell auswählen, aktuell {model}, Argumentationsaufwand {effort}",
+			"menu.aria": "Modell- und Argumentationsaufwand",
+			"menu.model": "Modell",
+			"menu.effort": "Aufwand",
+			"effort.providerDefault": "Standard",
+			"status.loading": "Erfrischende Modellliste…",
+			"error.action": "Modellvorgang fehlgeschlagen: {message}",
+			"error.sessionInUse": "Diese Sitzung wird bereits verwendet, möglicherweise von einer anderen laufenden DSH-Instanz (z. B. dsh Web oder der Desktop-App). Beenden Sie andere laufende DSH-Instanzen und versuchen Sie es erneut.",
+			"action.reload": "Neu laden",
+			"warning.groupLoad": "{name} konnte nicht geladen werden: {message}",
+			"search.placeholder": "Modelle suchen…",
+			"search.clear": "Suche löschen",
+			"search.empty": "Keine passenden Modelle.",
+			"empty.models": "Keine Modelle verfügbar.",
+			"empty.efforts": "Dieses Modell liefert keine Argumentationsaufwandsstufen."
+		};
+		/** Russian dictionary, checked against the English keys. */
+		const ru = {
+			"provider.account": "DeepSeek Аккаунт",
+			"command.label": "Модель",
+			"command.description": "Выберите модель для этого разговора",
+			"option.loadError": "Не удалось загрузить каталог: {message}.",
+			"trigger.fallback": "Выберите модель",
+			"trigger.loading": "Загрузка моделей…",
+			"trigger.selectAria": "Выберите модель",
+			"trigger.aria": "Выберите модель, текущую {model}",
+			"trigger.ariaEffort": "Выберите модель, текущую версию {model}, аргументацию {effort}",
+			"menu.aria": "Модель и рассуждения",
+			"menu.model": "Модель",
+			"menu.effort": "Усилие",
+			"effort.providerDefault": "По умолчанию",
+			"status.loading": "Обновление списка моделей…",
+			"error.action": "Не удалось выполнить операцию модели: {message}.",
+			"error.sessionInUse": "Этот сеанс уже используется, возможно, другим работающим экземпляром DSH (например, веб-сайтом dsh или настольным приложением). Закройте другие работающие экземпляры DSH и повторите попытку.",
+			"action.reload": "Перезагрузить",
+			"warning.groupLoad": "{name} не удалось загрузить: {message}",
+			"search.placeholder": "Поиск моделей…",
+			"search.clear": "Очистить поиск",
+			"search.empty": "Нет подходящих моделей.",
+			"empty.models": "Нет доступных моделей.",
+			"empty.efforts": "Эта модель не обеспечивает обоснования уровней усилий."
+		};
+		/** Portuguese dictionary, checked against the English keys. */
+		const pt = {
+			"provider.account": "DeepSeek Conta",
+			"command.label": "Modelo",
+			"command.description": "Selecione o modelo para esta conversa",
+			"option.loadError": "Falha ao carregar o catálogo: {message}",
+			"trigger.fallback": "Selecione o modelo",
+			"trigger.loading": "Carregando modelos…",
+			"trigger.selectAria": "Selecione o modelo",
+			"trigger.aria": "Selecione o modelo, atual {model}",
+			"trigger.ariaEffort": "Selecione modelo, atual {model}, esforço de raciocínio {effort}",
+			"menu.aria": "Modelo e esforço de raciocínio",
+			"menu.model": "Modelo",
+			"menu.effort": "Esforço",
+			"effort.providerDefault": "Padrão",
+			"status.loading": "Atualizando lista de modelos…",
+			"error.action": "Falha na operação do modelo: {message}",
+			"error.sessionInUse": "Esta sessão já está em uso, possivelmente por outra instância DSH em execução (como dsh web ou aplicativo de desktop). Saia de outras instâncias DSH em execução e tente novamente.",
+			"action.reload": "Recarregar",
+			"warning.groupLoad": "{name} falhou ao carregar: {message}",
+			"search.placeholder": "Pesquisar modelos…",
+			"search.clear": "Limpar pesquisa",
+			"search.empty": "Não há modelos correspondentes.",
+			"empty.models": "Nenhum modelo disponível.",
+			"empty.efforts": "Este modelo não fornece níveis de esforço de raciocínio."
+		};
+		//#endregion
+		//#region lib/types/client/index.js
+		/** One selectable row's id: an opaque row key (resolved by lookup, never parsed). */
+		function rowId(providerId, modelId) {
+			return `${providerId}/${modelId}`;
+		}
+		/** Flatten the directory into popup rows; failure rows are listed for visibility but never selectable. */
+		function optionsOf(directory, t) {
+			const rows = [];
+			for (const group of orderModelProviders(directory.groups)) {
+				const name = group.id === "deepseek-account" ? t("provider.account") : group.name;
+				for (const model of group.models) rows.push({
+					id: rowId(group.id, model.id),
+					label: model.name,
+					group: {
+						name: group.id,
+						label: name
+					},
+					...directory.current !== null && directory.current.provider === group.id && directory.current.model === model.id ? { active: true } : {}
+				});
+			}
+			for (const failure of directory.failures) rows.push({
+				id: `failure/${failure.id}`,
+				label: failure.id === "deepseek-account" ? t("provider.account") : failure.name,
+				detail: t("option.loadError", { message: failure.message })
+			});
+			return rows;
+		}
+		/**
+		* Resolve a picked row back to its model selection by matching against the loaded
+		* groups (the same data the rows were built from — ids stay opaque).
+		* @param state - the session's directory snapshot.
+		* @param id - the picked row id.
+		* @returns the row's model selection, or undefined for failure rows / stale ids.
+		*/
+		function selectionOf(state, id) {
+			for (const group of state.groups) for (const model of group.models) {
+				if (rowId(group.id, model.id) !== id) continue;
+				const reasoningEffort = state.current?.provider === group.id && state.current.model === model.id ? state.current?.reasoningEffort ?? model.reasoning?.defaultEffort : model.reasoning?.defaultEffort;
+				return {
+					provider: group.id,
+					model: model.id,
+					...reasoningEffort === void 0 ? {} : { reasoningEffort }
+				};
+			}
+		}
+		/** Dictionary namespace owned by this plugin. */
+		const NS = "model";
+		/** Required services: the contribution registry, the seat's slot registry, locale, and the service's own faces. */
+		const inject = [
+			"commandUi",
+			"locale",
+			"sessions",
+			"slots",
+			"remote",
+			"remote.session"
+		];
+		/**
+		* Client plugin body: mount ModelDirectoryResolver, register the `model` dictionaries,
+		* then register the /model popup contribution and the composer model seat
+		* over the service.
+		* @param ctx - client root context.
+		*/
+		function apply(ctx) {
+			ctx.effect(() => ctx.locale.register(NS, {
+				zh,
+				en,
+				ja,
+				es,
+				fr,
+				de,
+				ru,
+				pt
+			}), "ui-model-selection: dictionaries");
+			const t = ctx.locale.bind(NS);
+			ctx.plugin(ModelDirectoryResolver);
+			ctx.inject(["commandUi", "modelDirectories"], (scope) => {
+				const command = scope.get("commandUi");
+				const models = scope.modelDirectories;
+				const sessions = scope.sessions;
+				scope.effect(() => command.register({
+					name: "model",
+					label: () => t("command.label"),
+					description: () => t("command.description"),
+					icon: _deepseek_ai_dsh_client_ui_primitives.IconDataOutlineRegular,
+					available: (session) => sessions.subagentAddress(session.sessionId) === void 0,
+					ui: {
+						kind: "popupSelect",
+						searchMode: "fuzzy-label",
+						searchLabels: () => ({
+							placeholder: t("search.placeholder"),
+							empty: t("empty.models"),
+							noResults: t("search.empty")
+						}),
+						options: async (session) => {
+							if (sessions.subagentAddress(session.sessionId) !== void 0) throw new Error("model selection is unavailable for addressed subagent sessions");
+							return optionsOf(await models.directoryFor(session.sessionId).load(), t);
+						},
+						onSelect: async (option, session) => {
+							if (sessions.subagentAddress(session.sessionId) !== void 0) throw new Error("model selection is unavailable for addressed subagent sessions");
+							const directory = models.directoryFor(session.sessionId);
+							const selection = selectionOf(directory.store.getSnapshot(), option.id);
+							if (selection === void 0) throw new Error("this provider's catalog failed to load — pick a model from a loaded group");
+							const result = await directory.select(selection);
+							if (!result.ok) {
+								if (result.error.code === "session/writer-held") throw new Error(t("error.sessionInUse"));
+								throw result.error;
+							}
+						}
+					}
+				}), "ui-model-selection: /model contribution");
+			});
+			ctx.inject(["slots", "modelDirectories"], (scope) => {
+				const models = scope.modelDirectories;
+				const sessions = scope.sessions;
+				scope.slots.inject("conversation.input.model", () => scope.slots.register({
+					name: "conversation.input.model",
+					locale: NS,
+					children: { "conversation.input.model.label": {
+						kind: "single",
+						scope: "session",
+						inline: true
+					} },
+					inject: (sessionId) => {
+						const directory = models.directoryFor(sessionId);
+						const available = sessions.subagentAddress(sessionId) === void 0;
+						return {
+							available,
+							directory: directory.store,
+							load: () => {
+								if (available) directory.load().catch(() => {});
+							},
+							resolveText: (text) => ctx.locale.resolveText(text),
+							select: (selection) => available ? directory.select(selection) : Promise.resolve(void 0)
+						};
+					}
+				}, ModelSelect));
+			});
+		}
+		//#endregion
+		exports.ModelDirectory = ModelDirectory;
+		exports.ModelDirectoryResolver = ModelDirectoryResolver;
+		exports.apply = apply;
+		exports.inject = inject;
+		exports.ModelSelect = ModelSelect;
+  return module.exports;
+      })(require);
+      console.log("[picker-plus] official loaded:", Object.keys(officialSelect || {}).join(","));
+    } catch (error) {
+      console.log("[picker-plus] official inline failed:", error?.message ?? error);
+    }
     const ReactDOM = require('react-dom');
     const { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } = React;
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.6.0';
+    const VERSION = '0.7.0';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
+    // ── 是否接管整个模型槽位 ──────────────────────────────
+    //
+    // true（默认）：拿 priority:-1 抢占整槽，用本插件自己的分组选择器
+    //   ModelPickerPlus（搜索框 + 能力胶囊 + 收藏/最近 + Provider 分组折叠）。
+    //   厂商多时也好找；同时通过 `conversation.input.model.label` 保留官方
+    //   名字渲染扩展点，其他插件对 label 的贡献照常生效。
+    // false：退回纯官方扁平选择器，本插件只通过 label 贡献名字渲染。
+    //   官方逻辑 100% 继承，但厂商多了不好找。
+    //
+    // 默认 true：这正是本插件存在的意义——把难找的扁平列表换成好找的
+    //   分组模型库。置为 false 可退回官方原生选择器。
+    let takeOverSlot = true;
+
+    // ── 官方选择器的纯 CSS 定制 ────────────────────────────────
+    //
+    // 官方 README 给了明确锚点：label 外层带 data-provider-id / data-model-id，
+    // 三个 placement（trigger / menu / option）都有。这两个属性是官方源码
+    // 直接写的，不是构建 hash，所以比 ._9r0rkG_* 稳定。
+    //
+    // 只改视觉，不动布局/交互，不隐藏任何官方元素。
+    const PICKER_CSS = `
+/* 官方模型标签：给名字和徽章之间一点呼吸感 */
+[data-picker-plus-label] {
+  gap: 4px;
+}
+/* 倍率芯片：等宽数字，免费时绿色高亮 */
+[data-catalog-rate] {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+/* 官方徽章：圆角稍微收一点，和我们的芯片视觉对齐 */
+[data-model-badge-tone] {
+  border-radius: 5px;
+  font-weight: 600;
+}
+`;
     // 厂家标签栏：双行流式布局，两行按**真实测量宽度**填满后才折叠，
     // 剩余厂家由「更多 N」承接（不允许静默裁掉）。
     const VENDOR_TAB_MIN = 1;
@@ -110,6 +2268,14 @@ window.__ModuleLoader__.load({
         current: '当前',
         effort: '思考强度',
         providerDefault: '默认',
+        // 「启用智能体团队协作」开关（补回官方 agent-team 插件注入到
+        // conversation.input.model.options 子槽的功能；我们不声明子槽，故自行复刻）
+        teamLabel: '启用智能体团队协作',
+        teamDescription: '通过共享任务板协调多个智能体的分工与进度，复杂任务表现更佳，token 开销也相应更高。',
+        teamDisableTitle: '确认停用智能体团队协作？',
+        teamCancel: '取消',
+        teamConfirm: '确认停用',
+        teamFailed: '无法确认智能体团队协作设置已保存，请重试：{message}',
         favorites: '收藏',
         addFavorite: '添加收藏',
         removeFavorite: '取消收藏',
@@ -267,6 +2433,12 @@ window.__ModuleLoader__.load({
         current: 'Current',
         effort: 'Reasoning effort',
         providerDefault: 'Default',
+        teamLabel: 'Enable agent teamwork',
+        teamDescription: 'Coordinate work and progress across agents with a shared task board for better results on complex tasks, with correspondingly higher token costs.',
+        teamDisableTitle: 'Disable agent teamwork?',
+        teamCancel: 'Cancel',
+        teamConfirm: 'Disable',
+        teamFailed: 'Could not confirm the agent teamwork setting was saved. Try again: {message}',
         favorites: 'Favorites',
         addFavorite: 'Add favorite',
         removeFavorite: 'Remove favorite',
@@ -413,7 +2585,173 @@ window.__ModuleLoader__.load({
       const index = String(key).indexOf('\n');
       return index < 0 ? null : { provider: key.slice(0, index), model: key.slice(index + 1) };
     };
-    const modelLabel = (model) => String(model?.name || model?.id || '');
+    // ── 目录倍率后缀（跨插件约定）────────────────────────────
+    //
+    // Some connectors publish a credit rate by APPENDING it to the model's
+    // display name: `"Hy3 · x0.00"`. That is a string convention, not a field
+    // on the provider contract, so it is recognised by SHAPE — a trailing
+    // ` · x<number>` — rather than by asking which connector produced it.
+    //
+    // Why it matters here: this picker replaces the whole model slot, so it
+    // never runs the connector's own renderer. Drawing the raw name printed
+    // the rate as dead text inside the title, and the promotion badge the
+    // connector draws beside it was lost entirely. Splitting the rate out
+    // lets the row draw the name and the rate as two readable things.
+    //
+    // Matching is anchored to the END: a model legitimately named
+    // `"gpt-4x8-preview"` must not lose characters from the middle.
+    const CATALOG_RATE = / · x(\d+(?:\.\d+)?)$/u;
+    const splitCatalogRate = (label) => {
+      const text = String(label ?? '');
+      const match = CATALOG_RATE.exec(text);
+      if (match === null) return { base: text, rate: null };
+      return { base: text.slice(0, match.index), rate: Number(match[1]) };
+    };
+    /** The name without its rate suffix — what the title should say. */
+    const modelLabel = (model) => splitCatalogRate(String(model?.name || model?.id || '')).base;
+    /** The credit rate published in the name, or null when there is none. */
+    const modelRate = (model) => splitCatalogRate(String(model?.name || '')).rate;
+
+    // ── 官方契约对齐 ────────────────────────────────────
+    //
+    // 官方组件的签名里有三个本插件以前没收的能力：
+    //   renderSlot  —— 渲染官方子插槽（其他插件往 label 里贡献的内容）
+    //   resolveText —— 解析 badge 的多语言文本对象
+    //   t           —— 官方翻译（本插件有自己的 localeSvc，用不上）
+    //
+    // 前两个存到模块级变量，行组件直接取用，避免把 props 一层层
+    // 穿过 ModelSection 往下传。拿不到就退到本地实现，不影响渲染。
+    let officialSlotApi = { renderSlot: null, resolveText: null };
+    const setOfficialSlotApi = (api) => {
+      officialSlotApi = api || { renderSlot: null, resolveText: null };
+    };
+
+    /**
+     * 官方 badge 的 text 可能是字符串，也可能是按语言分派的字符串对象。
+     * 直接丢给 React 会报 “Objects are not valid as a React child”。
+     * 优先用官方 resolveText（它按当前 locale 解析），拿不到再本地退。
+     */
+    function resolveOfficialText(text) {
+      if (text === null || text === undefined) return null;
+      if (typeof text === 'string' || typeof text === 'number') return String(text);
+      if (typeof officialSlotApi.resolveText === 'function') {
+        try {
+          const resolved = officialSlotApi.resolveText(text);
+          if (typeof resolved === 'string') return resolved;
+        } catch { /* 退到本地解析 */ }
+      }
+      if (typeof text === 'object') {
+        const lang = (typeof document !== 'undefined' && document.documentElement && document.documentElement.lang) || 'zh';
+        const short = String(lang).slice(0, 2).toLowerCase();
+        const found = text[short] ?? text.en ?? Object.values(text).find(v => typeof v === 'string');
+        return typeof found === 'string' ? found : null;
+      }
+      return null;
+    }
+
+    /**
+     * 官方 badge → 可渲染节点。
+     *
+     * tone 用主题变量而不是写死颜色：官方的 Tag 也是这样跟随主题的，
+     * 写死会在明暗切换时变成一块不协调的色斑。
+     */
+    function officialBadgeNode(model, selected) {
+      const badge = model && model.badge;
+      if (!badge) return null;
+      const text = resolveOfficialText(badge.text);
+      if (text === null) return null;
+      const tone = String(badge.tone || '');
+      const toneColor = {
+        success: 'var(--dsw-alias-state-success-primary, #3fb950)',
+        warning: 'var(--dsw-alias-state-warn-label, #d29922)',
+        danger: 'var(--dsw-alias-state-error-primary, #f85149)',
+        info: 'var(--dsw-alias-state-business-primary, #4c8bf5)',
+      }[tone] || (selected ? 'var(--dsw-alias-label-primary, inherit)' : 'var(--dsw-alias-label-caption, #8b949e)');
+      const toneBg = {
+        success: 'rgba(63,185,80,.14)',
+        warning: 'rgba(210,153,34,.16)',
+        danger: 'rgba(248,81,73,.14)',
+        info: 'rgba(76,139,245,.14)',
+      }[tone] || 'transparent';
+      return React.createElement('span', {
+        'data-model-badge-tone': tone || 'default',
+        'data-official-badge': 'true',
+        style: {
+          flex: 'none', fontSize: '9.5px', lineHeight: '15px', padding: '0 5px',
+          borderRadius: '6px', fontFamily: 'ui-monospace, Consolas, monospace',
+          whiteSpace: 'nowrap', color: toneColor, background: toneBg,
+          border: `1px solid ${toneBg === 'transparent' ? 'var(--dsw-alias-border-l1, rgba(128,128,128,.35))' : 'transparent'}`,
+        },
+      }, text);
+    }
+
+    /**
+     * 模型名字的完整渲染。三件事按官方约定摆位：
+     *   1. 官方 badge（trigger 在前、菜单在后）
+     *   2. 名字（剥掉目录倍率后缀）
+     *   3. 倍率芯片（本插件自己加的）
+     *
+     * 返回数组而不是单个节点，因为调用点的排版不同：有的包在
+     * flex 容器里，有的需要自己控制间隔。
+     */
+    function modelNameNodes({ provider, model, placement, selected }) {
+      const badge = officialBadgeNode(model, selected);
+      const name = React.createElement('span', {
+        style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      }, modelLabel(model));
+      const rate = modelRate(model);
+      const chip = rate === null ? null : React.createElement('span', {
+        title: `信用倍率 x${rate}`,
+        'data-catalog-rate': String(rate),
+        style: {
+          flex: 'none', fontSize: '9.5px', lineHeight: '15px', padding: '0 5px', borderRadius: '7px',
+          fontFamily: 'ui-monospace, Consolas, monospace',
+          color: rate === 0 ? 'var(--dsw-alias-state-success-primary, #3fb950)' : 'var(--dsw-alias-label-caption, #8b949e)',
+          background: rate === 0 ? 'rgba(63,185,80,.14)' : 'transparent',
+          border: `1px solid ${rate === 0 ? 'rgba(63,185,80,.45)' : 'var(--dsw-alias-border-l1, rgba(128,128,128,.35))'}`,
+        },
+      }, `x${rate}`);
+      const spacer = React.createElement('span', { key: 'sp', style: { flex: 'none', width: '4px' } });
+      // 位置约定与官方一致：输入框里徽章在前，菜单里在后。
+      return placement === 'trigger'
+        ? [badge, badge ? spacer : null, name, chip].filter(Boolean)
+        : [name, chip, badge ? spacer : null, badge].filter(Boolean);
+    }
+
+    /**
+     * 优先让官方子插槽渲染（其他插件的贡献才能生效），
+     * 拿不到 renderSlot 就用本地的 modelNameNodes。
+     *
+     * 这是「对官方支持最大」的关键一步：官方把 label 开放成插槽，
+     * 我们接管了外层槽位，就应该把这个子插槽继续传递下去，
+     * 否则其他插件的贡献到了这里就断了。
+     */
+    function renderModelName({ provider, model, placement, selected }) {
+      const renderSlot = officialSlotApi.renderSlot;
+      const local = () => modelNameNodes({ provider, model, placement, selected });
+      let kids;
+      if (typeof renderSlot === 'function') {
+        try {
+          const contributed = renderSlot('conversation.input.model.label', {
+            provider, model, placement, selected,
+          }, { fallback: null });
+          // 有插件贡献就用它的（尊重官方插槽协议）；没有就落到本地渲染。
+          kids = contributed ? [contributed] : local();
+        } catch {
+          kids = local();
+        }
+      } else {
+        kids = local();
+      }
+      // 官方 README 承诺的 CSS 锛点：data-provider-id / data-model-id
+      // 在三个 placement 都可用。包一层把它们带上，外部样式就能按
+      // 厂家或按模型定制，不必依赖可能变动的构建 hash class。
+      return [React.createElement('span', {
+        'data-provider-id': provider && provider.id !== undefined ? String(provider.id) : undefined,
+        'data-model-id': model && model.id !== undefined ? String(model.id) : undefined,
+        style: { display: 'inline-flex', alignItems: 'baseline', minWidth: 0, maxWidth: '100%' },
+      }, ...kids)];
+    }
     const normalize = (value) => String(value ?? '').toLowerCase().trim();
     const normalizeLabel = (value) => normalize(value).replace(/[^a-z0-9\u4e00-\u9fff]+/gi, '');
     const isDistinctText = (value, ...others) => {
@@ -870,6 +3208,17 @@ window.__ModuleLoader__.load({
     // 从未使用过的厂家一律排在后面，且**保持目录默认顺序**。
     // 这样首次使用完全等同默认目录（不打乱既有习惯），用一段时间后
     // 常用的自动浮到前面，不必去末尾翻。
+    // 打开模型库时默认落在「当前选中模型所属的厂商页」，而不是推荐页。
+    // 目录还没到（groups 为空）时仍按 provider 定位——厂商 tab 会随目录出现；
+    // 目录到了但厂商已不存在（卸载/切换）才回退推荐，避免停在空页。
+    function resolveDefaultViewMode(current, groups) {
+      const provider = current?.provider ? String(current.provider) : '';
+      if (!provider) return 'recommend';
+      const list = Array.isArray(groups) ? groups : [];
+      if (list.length > 0 && !list.some(group => String(group?.id) === provider)) return 'recommend';
+      return `provider:${provider}`;
+    }
+
     // 稳定排序：用 index 作次级比较键，绝不因排序抖动改变同频次的相对位置。
     function sortGroupsByUsage(groups, usage) {
       const list = Array.isArray(groups) ? groups : [];
@@ -1638,12 +3987,9 @@ window.__ModuleLoader__.load({
           },
         },
           React.createElement('span', { style: { display: 'flex', alignItems: 'center', gap: '7px', minWidth: 0 } },
-            React.createElement('span', {
-              style: {
-                fontSize: '13px', fontWeight: selected ? 650 : 600, color: colors.text,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              },
-            }, modelLabel(model)),
+            // 名字 + 官方 badge + 倍率芯片统一由 modelNameNodes 渲染：
+            // 三者都跟着官方的位置约定走，任一缺失不影响其余两个。
+            ...renderModelName({ provider: group, model, placement: 'option', selected }),
             // 思考模式可见性：只有「可切换档位」的模型才在标题旁挂档位摘要
             // （如 High / 5 档可调）——那是列表里唯一能看出"点它可调强度"的线索。
             // 「固定开启推理、无档位」的模型不在这里重复标注：右侧那枚「推理」
@@ -1763,7 +4109,8 @@ window.__ModuleLoader__.load({
         React.createElement(ProviderBadge, { group, model, size: 28 }),
         React.createElement('div', { style: { flex: 1, minWidth: 0 } },
           React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '7px', minWidth: 0 } },
-            React.createElement('span', { style: { fontSize: '13px', fontWeight: selected ? 650 : 600, color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, modelLabel(model)),
+            // 与模型行同一规则：名字 + 官方 badge + 倍率芯片统一渲染。
+            ...renderModelName({ provider: group, model, placement: 'option', selected }),
           ),
           // 推荐理由只跟任务有关，在顶部说明条统一展示；行内只保留厂家归属。
           React.createElement('div', { style: { color: colors.muted, fontSize: '10.5px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(group.name)),
@@ -1791,7 +4138,10 @@ window.__ModuleLoader__.load({
       );
     });
 
-    function ModelPickerPlus({ locked, available, directory, load, select, quickCurrent, sessionReplyState, readReplyState, readUsageSnapshot }) {
+    function ModelPickerPlus({ locked, available, directory, load, select, quickCurrent, sessionReplyState, readReplyState, readUsageSnapshot, renderSlot, resolveText, useProjection, useSession, useSessions, sessionId, readOptionEntries, subscribeOptions, bindLocale }) {
+      // 官方注入的 renderSlot / resolveText 存进模块级变量：
+      // 行组件在很深的子树上，一层层传 props 只会多出徒增遗漏的接缝。
+      setOfficialSlotApi({ renderSlot, resolveText });
       const t = translate;
       const rootRef = useRef(null);
       const triggerRef = useRef(null);
@@ -1980,6 +4330,17 @@ window.__ModuleLoader__.load({
 
       const modelIndex = useMemo(() => createModelIndex(groups), [groups]);
       const current = state.current ?? null;
+      // 目录若在打开之后才加载完成，补一次默认视图修正：
+      // 仅当用户还停在自动设定的视图（没手动切过 tab）时才改，避免抢走手动选择。
+      useEffect(() => {
+        if (!open || !current || groups.length === 0) return;
+        const desired = resolveDefaultViewMode(current, groups);
+        if (viewMode === openViewRef.current && viewMode !== desired) {
+          openViewRef.current = desired;
+          setViewMode(desired);
+        }
+      }, [open, current?.provider, groups, viewMode]);
+
       const currentChoice = current ? modelIndex.byKey.get(modelKey(current.provider, current.model)) : undefined;
       const currentModel = currentChoice?.model;
       const currentEffort = effortLabel(currentModel, current, t);
@@ -2064,7 +4425,8 @@ window.__ModuleLoader__.load({
       const placeMenu = useCallback(() => {
         const rect = triggerRef.current?.getBoundingClientRect?.();
         if (!rect) return;
-        const width = Math.min(640, Math.max(420, window.innerWidth - 24));
+        // 左右两栏需要更宽的面板：左导航 ~200px + 右侧模型列表。
+        const width = Math.min(960, Math.max(720, window.innerWidth - 24));
         setMenuPos({
           left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
           bottom: Math.max(12, window.innerHeight - rect.top + 8),
@@ -2073,12 +4435,21 @@ window.__ModuleLoader__.load({
         });
       }, []);
 
+      const openViewRef = useRef(null);
       useEffect(() => {
-        if (!open) return undefined;
+        if (!open) { openViewRef.current = null; return undefined; }
         mark('menu open', directory ? summarizeState(directory.getSnapshot?.()) : { directory: null });
         placeMenu();
         setQuery('');
         setActionError(null);
+        // 默认定位到当前选中模型的厂商页（不是推荐页）。目录可能还在加载，
+        // 所以除这里立即算一次，下面 groups 到位后再补一次修正。
+        const initialSnap = directory?.getSnapshot?.();
+        const initialGroups = initialSnap?.groups ?? [];
+        const initialCurrent = initialSnap?.current ?? null;
+        const firstView = resolveDefaultViewMode(initialCurrent, initialGroups);
+        openViewRef.current = firstView;
+        setViewMode(firstView);
         try {
           void load?.();
         } catch (error) {
@@ -2087,6 +4458,15 @@ window.__ModuleLoader__.load({
         const closeOutside = (event) => {
           if (rootRef.current?.contains(event.target) === true) return;
           if (menuRef.current?.contains(event.target) === true) return;
+          // 团队关闭确认框等 shell.overlay Modal 是 portal 到 body 的独立 aria-modal
+          // 对话框（outlives 本菜单）。它们打开时，点确认框按钮/遮罩不算"点到外面"，
+          // 否则会把本面板一起关掉。只要存在其它 aria-modal dialog 就不处理外部点击。
+          try {
+            const dialogs = document.querySelectorAll?.('[role="dialog"][aria-modal="true"]') || [];
+            for (const d of dialogs) {
+              if (d !== menuRef.current) return;
+            }
+          } catch { /* DOM 不可用时按原逻辑处理 */ }
           closeMenu();
         };
         const closeEscape = (event) => { if (event.key === 'Escape') closeMenu(); };
@@ -2196,6 +4576,51 @@ window.__ModuleLoader__.load({
       const [effortPos, setEffortPos] = useState(null);
       const effortRef = useRef(null);
       const effortPanelRef = useRef(null);
+
+      // ── 自动渲染官方 conversation.input.model.options 子槽的所有条目 ──
+      // 官方把「模型与推理等级菜单」的附加项（现在有「启用智能体团队协作」，
+      // 以后官方还会加别的）注入到这个 list 槽，由官方 ModelSelect 通过
+      // renderSlot 渲染。我们 0.7.9 起接管整槽时不再声明 children（否则与官方
+      // 的 label 声明重复，整槽 register 被静默丢弃，UI 不变），拿不到 renderSlot。
+      // 所以改为直接读这个槽的所有条目、逐个渲染——官方以后再加任何附加项都会
+      // 自动出现在我们的分组面板里，一劳永逸，不必每次都手工补一遍。
+      // 新增 useState 放在所有既有 useState 之后（索引 21），绝不插到中间打乱
+      // 测试按下标引用的 effortOpen(18)/effortPos(20)/vendorExpanded(12)。
+      const [, setOptionTick] = useState(0);
+      useEffect(() => {
+        if (typeof subscribeOptions !== 'function') return undefined;
+        return subscribeOptions(() => setOptionTick(x => x + 1));
+      }, [subscribeOptions]);
+      const optionEntries = typeof readOptionEntries === 'function'
+        ? readOptionEntries(sessionId)
+        : [];
+      const optionCells = Array.isArray(optionEntries) ? optionEntries.map((entry, i) => {
+        const Cell = entry?.component;
+        if (typeof Cell !== 'function' && typeof Cell !== 'object') return null;
+        let injected = {};
+        if (typeof entry.inject === 'function') {
+          try { injected = entry.inject(sessionId) || {}; } catch { injected = {}; }
+        }
+        const cellT = typeof bindLocale === 'function'
+          ? bindLocale(entry.locale || 'agent-team')
+          : (key) => key;
+        // owner props 对齐官方 ModelSelect.tsx:505-512：locked / dismiss /
+        // reportFailure；标准 hooks（useProjection 等）由宿主注入给我们，再透传
+        // 给条目组件（TeamModeToggle 依赖它们读 agentTeam/modelSelection 投影）。
+        return React.createElement(Cell, {
+          key: entry.id || `option-${i}`,
+          useProjection, useSession, useSessions, sessionId,
+          ...injected,
+          t: cellT,
+          locked: !!locked,
+          // 官方 TeamModeToggle 关闭团队模式时会先调 dismiss() 再弹确认框。
+          // 不能接 closeMenu——否则关团队模式会把本模型面板一起关掉。确认框是
+          // portal 到 body 的独立 Modal，层级高于面板，面板留着不挡它。
+          dismiss: () => {},
+          reportFailure: (message) => setActionError(String(message)),
+        });
+      }).filter(Boolean) : [];
+
       // 档位面板走 Portal 渲染到 body：触发条自身带 overflow:hidden，
       // 输入栏祖先也可能裁切，绝对定位子元素会被直接剪掉（点了没反应）。
       // 位置在打开时按触发点实时测量。
@@ -2288,8 +4713,13 @@ window.__ModuleLoader__.load({
         React.createElement('span', {
           style: {
             minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit',
+            display: 'inline-flex', alignItems: 'center', gap: '4px',
           },
-        }, triggerText),
+          // 选中后触发条也要显示倍率芯片 + 官方徽章（x0 / 限时免费），
+          // 与列表里保持一致——原来只画纯名字，选完就「没了」。
+        }, ...(currentModel
+          ? modelNameNodes({ provider: currentChoice?.group, model: currentModel, placement: 'trigger', selected: true })
+          : [triggerText])),
         currentEffort
           ? React.createElement('span', {
             ref: effortRef,
@@ -2370,21 +4800,32 @@ window.__ModuleLoader__.load({
             // 高度固定为视口可用高度：筛选/切 tab 只改变列表内容，
             // 弹层本身不再忽高忽低（短列表内部留白即可）。
             height: `${menuPos.maxHeight}px`, maxHeight: menuPos.maxHeight,
-            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            // 左右两栏：左列放标题/搜索/导航（视图 + 厂家），右列放当前卡 + 模型列表。
+            // 用 grid 而非搬动 DOM —— 保留所有 role/data 锚点，测试与交互都不受影响。
+            display: 'grid', gridTemplateColumns: '220px minmax(0, 1fr)',
+            // 四行：①顶部全局检索条（横跨两栏）②左团队+导航 / 右当前卡
+            // ③左导航（延续）/ 右模型列表 ④底部键盘提示。
+            gridTemplateRows: 'auto auto minmax(0, 1fr) auto', overflow: 'hidden',
             background: colors.panel2, border: `1px solid ${colors.border}`, borderRadius: '14px',
-            boxShadow: '0 18px 60px rgba(0,0,0,.45)', color: colors.text, zIndex: 9999,
+            boxShadow: '0 18px 60px rgba(0,0,0,.45)', color: colors.text,
+            // 层级夹在普通 UI 与官方浮层之间：普通 UI(≤100) < 面板(500) <
+            // 确认框 Modal(1000) < ⓘ tooltip portal(1100) < 子菜单(1101)。
+            // 高于普通 UI 才能盖住聊天区；低于 1000 才能让团队开关的确认框
+            // （portal 到 body 的 _root_1ytzq_6，z-index:1000）显示在面板之上；
+            // 低于 1100 才能不挡住 ⓘ 提示。任何一端越界都会被覆盖。
+            zIndex: 500,
           },
         },
-          React.createElement('div', { style: { padding: '12px', borderBottom: `1px solid ${colors.border}` } },
-            React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' } },
-              React.createElement('div', { style: { fontSize: '14px', fontWeight: 700, flex: 1 } },
-                t('title'),
-                React.createElement('span', { style: { marginLeft: '6px', fontSize: '10px', color: colors.muted, fontWeight: 500 } }, `v${VERSION}`),
-              ),
-              React.createElement('button', {
-                type: 'button', onClick: closeMenu, 'aria-label': t('close'),
-                style: { border: 'none', background: 'transparent', color: colors.muted, cursor: 'pointer', fontSize: '11px' },
-              }, t('close')),
+          // 顶部全局检索条：横跨左右两栏，一个框搜遍所有厂商 / 模型 / 用途。
+          // 搜索模型时右栏平铺结果并标注所属厂商（即"搜模型反找厂商"）。
+          React.createElement('div', { style: {
+            gridColumn: '1 / 3', gridRow: '1', padding: '12px 12px 8px',
+            display: 'flex', alignItems: 'center', gap: '10px',
+            borderBottom: `1px solid ${colors.border}`,
+          } },
+            React.createElement('div', { style: { fontSize: '14px', fontWeight: 700, whiteSpace: 'nowrap' } },
+              t('title'),
+              React.createElement('span', { style: { marginLeft: '6px', fontSize: '10px', color: colors.muted, fontWeight: 500 } }, `v${VERSION}`),
             ),
             React.createElement('input', {
               autoFocus: true,
@@ -2394,11 +4835,30 @@ window.__ModuleLoader__.load({
               placeholder: t('search'),
               onChange: event => setQuery(event.target.value),
               style: {
-                width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: '9px',
+                flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '8px 10px', borderRadius: '9px',
                 border: `1px solid ${colors.border}`, background: colors.panel, color: colors.text,
                 outline: 'none', fontSize: '13px',
               },
             }),
+            React.createElement('button', {
+              type: 'button', onClick: closeMenu, 'aria-label': t('close'),
+              style: { border: 'none', background: 'transparent', color: colors.muted, cursor: 'pointer', fontSize: '11px', whiteSpace: 'nowrap' },
+            }, t('close')),
+          ),
+          React.createElement('div', { style: {
+            // 左导航列：团队开关 + 视图/厂家导航（标题/搜索已提到顶部全局检索条）。
+            gridColumn: '1', gridRow: '2 / 4', padding: '12px',
+            // 左列本身不滚动：团队开关固定在顶部；只让下面的视图/厂家导航列表内部滚动。
+            display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden',
+            borderRight: `1px solid ${colors.border}`,
+          } },
+            // 官方 conversation.input.model.options 子槽的所有条目（现在有
+            // 团队开关，以后官方再加什么都会自动出现）——逐个自动渲染。
+            ...(optionCells.length ? [React.createElement('div', {
+              key: 'model-options',
+              'data-model-options': 'true',
+              style: { display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '10px' },
+            }, ...optionCells)] : []),
             // 标签栏 = 双行流式：
             //   固定视图（推荐/最近/收藏/全部）先占第一行，厂家标签紧接着
             //   流式排下去，装不下就换到第二行，第二行也装不下才折叠成
@@ -2446,16 +4906,10 @@ window.__ModuleLoader__.load({
 
               // 「更多 N」按最大可能位数估宽，作为腾位依据。
               const moreWidth = widthOf('more', fill(t('moreVendors'), { count: vendorItems.length }), false);
-              // 装箱只用来决定「折叠几个」——固定视图与厂家共用同一个流式容器，
-              // 由浏览器自然换行（和 demo 一致：厂家紧接「全部模型」之后）。
-              // 之前两行是各自独立的 div，第二行从 x=0 重新开始，所以
-              // ① 厂家视觉上没跟着「全部模型」；② 第二行容器只有一行高，
-              // 末尾厂家溢出到第三行。现在改成单容器，两个问题一并消失。
-              const packed = vendorExpanded
-                ? { visible: vendorItems, hidden: 0 }
-                : packVendorTabs(vendorItems, capacity1, capacity2, moreWidth);
-              const visibleVendors = packed.visible;
-              const hiddenCount = packed.hidden;
+              // 所有厂家一次全部放出来，不再折叠成「更多 N」——
+              // 左导航列独立滚动（overflowY:auto），装得下所有厂家。
+              const visibleVendors = vendorItems;
+              const hiddenCount = 0;
 
               const renderTab = (mode, label, count, extra) => React.createElement('button', {
                 key: mode, type: 'button', role: 'tab', 'aria-selected': viewMode === mode,
@@ -2492,30 +4946,46 @@ window.__ModuleLoader__.load({
               // 厂家紧接「全部模型」之后，由浏览器自然换行——和 demo 一致。
               // 容器不做 CSS 裁切：折叠由装箱决定放几个，展开则全放。
               const rowStyle = {
-                display: 'flex', gap: `${VENDOR_TAB_GAP}px`, flexWrap: 'wrap', alignItems: 'center',
+                // 左导航列：视图 / 厂家竖排成导航项，整列可滚动。
+                display: 'flex', flexDirection: 'column', gap: `${VENDOR_TAB_GAP}px`,
+                flexWrap: 'wrap', alignItems: 'stretch',
               };
               return React.createElement('div', {
                 // 用 ref 拿真实宽度做测量（首帧测完再装箱）。
                 ref: tabbarRef,
-                style: { marginTop: '10px', borderBottom: `1px solid ${colors.border}`, paddingBottom: '4px' },
+                // 只让视图/厂家导航这一块滚动，标题/搜索/团队开关固定在顶部。
+                style: {
+                  marginTop: '10px', borderBottom: `1px solid ${colors.border}`, paddingBottom: '4px',
+                  flex: 1, minHeight: 0, overflowY: 'auto',
+                },
               },
                 React.createElement('div', {
                   role: 'tablist', 'data-tab-row': 'all', style: rowStyle,
                 },
-                  fixedTabs.map(([mode, label]) => renderTab(mode, label, null)),
-                  visibleVendors.map(item => renderTab(item.mode, item.label, item.count)),
-                  hiddenCount > 0
-                    ? renderTab(VENDOR_TABS_MORE, fill(t('moreVendors'), { count: hiddenCount }), null)
-                    : (vendorExpanded && vendorItems.length > 0
-                      ? renderTab(VENDOR_TABS_LESS, t('fewerVendors'), null)
-                      : null),
+                  // 固定视图（推荐/最近/收藏/全部模型）sticky 钉在导航区顶部，
+                  // 不随厂家列表滚动——只有下面那截厂家列表在滚。
+                  // 2×2 网格排布（一行两个），不再竖排占满整列。
+                  React.createElement('div', {
+                    'data-fixed-views': 'true',
+                    style: {
+                      display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                      gap: `${VENDOR_TAB_GAP}px`,
+                      position: 'sticky', top: 0,
+                      background: colors.panel2, paddingBottom: '4px',
+                    },
+                  }, fixedTabs.map(([mode, label]) => renderTab(mode, label, null))),
+                  // 厂家列表：唯一可滚动的部分。
+                  React.createElement('div', {
+                    'data-vendor-list': 'true',
+                    style: { display: 'flex', flexDirection: 'column', gap: `${VENDOR_TAB_GAP}px` },
+                  }, visibleVendors.map(item => renderTab(item.mode, item.label, item.count))),
                 ),
               );
             })(),
           ),
 
           currentChoice ? React.createElement('div', {
-            style: { padding: '10px 12px', borderBottom: `1px solid ${colors.border}`, background: colors.panel },
+            style: { gridColumn: '2', gridRow: '2', padding: '10px 12px', borderBottom: `1px solid ${colors.border}`, background: colors.panel },
           },
             React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
               React.createElement('span', { style: { fontSize: '11px', color: colors.muted, fontWeight: 700 } }, t('current')),
@@ -2546,7 +5016,7 @@ window.__ModuleLoader__.load({
           ) : quickCurrent
             // 最小当前卡：远端目录挂掉时，本地投影依然知道当前模型。
             ? React.createElement('div', {
-              style: { padding: '10px 12px', borderBottom: `1px solid ${colors.border}`, background: colors.panel },
+              style: { gridColumn: '2', gridRow: '2', padding: '10px 12px', borderBottom: `1px solid ${colors.border}`, background: colors.panel },
             },
               React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
                 React.createElement('span', { style: { fontSize: '11px', color: colors.muted, fontWeight: 700 } }, t('current')),
@@ -2560,7 +5030,7 @@ window.__ModuleLoader__.load({
             )
             : null,
 
-          React.createElement('div', { style: { flex: 1, overflowY: 'auto', padding: '10px 8px' } },
+          React.createElement('div', { style: { gridColumn: '2', gridRow: '3', minHeight: 0, overflowY: 'auto', padding: '10px 8px' } },
             state.status === 'error'
               ? React.createElement('div', { style: { padding: '14px', color: colors.danger, fontSize: '13px' } },
                 fill(t('loadFailed'), { message: state.error ?? 'unknown' }),
@@ -2806,7 +5276,7 @@ window.__ModuleLoader__.load({
               : null,
           ),
           React.createElement('div', {
-            style: { display: 'flex', alignItems: 'center', gap: '12px', padding: '7px 12px', borderTop: `1px solid ${colors.border}`, color: colors.muted, fontSize: '10.5px' },
+            style: { gridColumn: '1 / 3', gridRow: '4', display: 'flex', alignItems: 'center', gap: '12px', padding: '7px 12px', borderTop: `1px solid ${colors.border}`, color: colors.muted, fontSize: '10.5px' },
           },
             React.createElement('span', null, t('keyboardNavigate')),
             React.createElement('span', null, t('keyboardUse')),
@@ -2828,7 +5298,9 @@ window.__ModuleLoader__.load({
               minWidth: effortPos.minWidth,
               display: 'flex', flexDirection: 'column', padding: '4px', gap: '1px',
               background: colors.panel2, border: `1px solid ${colors.border}`, borderRadius: '10px',
-              boxShadow: '0 -8px 28px rgba(0,0,0,.4)', zIndex: 10000,
+              boxShadow: '0 -8px 28px rgba(0,0,0,.4)',
+              // 推理等级弹层：须在主面板(500)之上、确认框(1000)与 tooltip(1100)之下。
+              zIndex: 600,
             },
           },
             React.createElement('div', {
@@ -2884,6 +5356,39 @@ window.__ModuleLoader__.load({
       // 设置页用的 RPC 通道：在 apply 作用域解析（注册时经闭包交给组件）。
       // 只在真正需要时取一次，取不到就返回 null——组件会显示明确的错误，
       // 而不是把整个 settings.section 拖崩（那是上一个版本的真实故障）。
+      // ── 官方选择器的纯 CSS 定制（不改组件、不接管槽位）─────────────
+      //
+      // 官方 README 明确给了这条路：
+      //   "styles can target the enclosing label's data-provider-id and
+      //    data-model-id attributes in all three placements"
+      // 这两个属性是官方源码在 renderModelLabel 里直接写的（不是构建 hash），
+      // 所以比覆盖 ._9r0rkG_* 这种带 hash 的 class 稳定得多。
+      //
+      // 原则：只改视觉（间距、字号、圆角），绝不动布局与交互，
+      // 也不隐藏任何官方元素——少画一个东西就是又一个官方特性被丢了。
+      if (typeof ctx.effect === 'function') {
+        try {
+          ctx.effect(() => {
+            if (typeof document === 'undefined' || !document.head || typeof document.createElement !== 'function') {
+              return undefined;
+            }
+            let style;
+            try {
+              style = document.createElement('style');
+              if (!style || typeof style.setAttribute !== 'function') return undefined;
+              style.setAttribute('data-plugin', 'dsh-model-picker-plus');
+              style.textContent = PICKER_CSS;
+              document.head.appendChild(style);
+            } catch {
+              return undefined;
+            }
+            return () => {
+              try { if (style && typeof style.remove === 'function') style.remove(); } catch { /* 已移除 */ }
+            };
+          });
+        } catch { /* 样式是增强，拿不到不能挡住下面的注册 */ }
+      }
+
       const resolveSettingsRpc = (ownerCtx) => {
         try {
           const ns = typeof ownerCtx?.get === 'function' ? ownerCtx.get('connection') : undefined;
@@ -2895,6 +5400,35 @@ window.__ModuleLoader__.load({
         const slots = scope.slots;
         const modelDirectories = scope.modelDirectories;
         const sessions = scope.sessions;
+
+        // ── 官方模型标签插槽（官方推荐的扩展点）──────────────────
+        //
+        // `conversation.input.model.label` 是官方为「名字怎么画」留的 single 槽位，
+        // 三处共用：输入框触发器（placement='trigger'）、根菜单当前值（'menu'）、
+        // 每个模型选项（'option'）。owner props 给 provider / model / placement /
+        // selected，其中 `model` 是完整的目录对象，**包括官方自己的 model.badge**。
+        //
+        // 为什么走这条路而不是 priority:-1 整槽替换：
+        //  - 选择器自己负责点击、搜索、焦点、禁用、对勾、键盘导航、锚点定位；
+        //  - 官方新增的任何特性（新徽章、促销时段、无障碍文本）自动继承，不会
+      //    因为本插件重写了一遍而漏掉；
+      //  - 本插件只贡献非交互内联内容，符合官方契约。
+      const registerModelLabel = () => {
+        if (!slots || typeof slots.inject !== 'function' || typeof slots.register !== 'function') return false;
+        try {
+          slots.inject('conversation.input.model.label', () => slots.register(
+            { name: 'conversation.input.model.label' },
+            ModelLabel,
+          ));
+          mark('conversation.input.model.label registered');
+          return true;
+        } catch (error) {
+          mark('model.label register failed', String(error?.message ?? error));
+          return false;
+        }
+      };
+
+
 
         // 设置页：模型用量明细（settings.section 是「每个条目一个设置页」的正式挂点）。
         // 注册条件与主槽位一致：缺 slots 能力就退让，不让插件挂载失败。
@@ -2924,6 +5458,10 @@ window.__ModuleLoader__.load({
           mark('settings.section register failed', String(error?.message ?? error));
         }
 
+        // 官方标签插槽：只接管「名字怎么画」，选择器本体仍是官方的。
+        // 失败不影响主选择器（两件事互不依赖）。
+        registerModelLabel();
+
         // register is called from inside the inject callback, i.e. while the
         // composer renders: an absent register() must decline the mount here
         // rather than throw through React later.
@@ -2935,12 +5473,33 @@ window.__ModuleLoader__.load({
           });
           return;
         }
-        slots.inject('conversation.input.model', () => slots.register(
+        // ── 整槽接管开关 ────────────────────────────────────
+        //
+        // true = 本插件接管整槽（priority:-1）：换来用量徽章、排序、收藏、
+        //   跨厂家搜索，代价是官方每加一个新特性都要我们自己补一遍。
+        // false = 官方选择器接管，我们只通过 `conversation.input.model.label`
+        //   挂名字渲染。官方逻辑 100% 继承，我们只加信息。
+        //
+        // 默认值选 true：本插件的核心价值就是分组/可搜索选择器，
+        // 厂商多了官方扁平列表根本没法找。想临时回到官方选择器可设 false。
+        // 用模块级变量而不是 const，测试才能分别验证两条路径——
+        // 只验证一条的测试，会放任另一条烂掉。
+        // 接管组件用自有的分组选择器 ModelPickerPlus（搜索框 + 能力胶囊 +
+        // 收藏/最近 + Provider 分组折叠），倍率芯片、官方 badge 位置约定
+        // 与用量列表都已内置。
+        if (takeOverSlot) slots.inject('conversation.input.model', () => slots.register(
           {
             name: 'conversation.input.model',
             // 单槽位通过优先级覆盖：原生项为隐式 0，本插件用 -1 抢占；
             // 卸载后原生选择器自动恢复，无需手动删除。
             priority: -1,
+            // 关键：不能再声明 children！官方 dsh-client-ui-model-selection
+            // 已声明 'conversation.input.model.label' 子槽；宿主 SlotCore.register
+            // 对重复子槽声明会直接抛错（"slot ... is already declared"），
+            // 导致本整槽注册被静默丢弃、官方扁平选择器继续渲染——这正是
+            // "日志加载了但 UI 没变" 的根因。去掉 children 后 renderSlot prop
+            // 不会被注入，ModelPickerPlus 已有本地 modelNameNodes 降级路径，
+            // 视觉与倍率芯片不受影响。
             locale: NS,
             inject: (sessionId) => {
               // 懒绑定 + 自愈重试：directoryFor 在运行时重载 / Provider 插件
@@ -3025,6 +5584,27 @@ window.__ModuleLoader__.load({
                   }
                 }
                 return null;
+              };
+
+              // 官方 conversation.input.model.options 子槽的所有条目：直接读
+              // 快照交给组件渲染，并在槽位变化时 bump 触发重渲染。这样官方
+              // 以后往这个菜单加任何附加项（团队开关只是目前的一个），都会
+              // 自动出现在我们的分组面板里，不用每次手工补一遍。
+              const readOptionEntries = () => {
+                if (!slots || typeof slots.entries !== 'function') return [];
+                try { return slots.entries('conversation.input.model.options') || []; }
+                catch { return []; }
+              };
+              const subscribeOptions = (fn) => {
+                if (!slots || typeof slots.subscribe !== 'function' || typeof fn !== 'function') return undefined;
+                try { return slots.subscribe('conversation.input.model.options', fn); }
+                catch { return undefined; }
+              };
+              const bindLocale = (ns) => {
+                if (localeSvc && typeof localeSvc.bind === 'function') {
+                  try { return localeSvc.bind(ns); } catch { /* 落到下面的兜底 */ }
+                }
+                return (key) => key;
               };
 
               // 同一模块世代只预热一次，避免每个会话重复请求目录。
@@ -3321,9 +5901,16 @@ window.__ModuleLoader__.load({
                   await real.select(selection); // 保留底层具体错误，交给界面显示。
                   return true;
                 },
+                // 官方 conversation.input.model.options 子槽的读取器：交给组件
+                // 自动渲染所有条目（团队开关及以后官方再加的任何附加项）。
+                // useProjection/useSession/useSessions/sessionId 是宿主按标准
+                // props 自动注入的，不在这里透传，以免 undefined 覆盖真实 hook。
+                readOptionEntries, subscribeOptions, bindLocale,
               };
             },
           },
+          // 用自有分组组件 ModelPickerPlus（搜索框 + 能力胶囊 + 收藏/最近 +
+          // Provider 分组折叠），厂商多时也好找。官方扁平组件不再作为主选。
           ModelPickerPlus,
         ));
       });
@@ -3483,6 +6070,106 @@ window.__ModuleLoader__.load({
     // 明细/时间线每页条数。一屏 25 行 ≈ 刚好填满设置页可视高度，
     // 再多就要靠滚动找东西，分页本身就失去意义了。
     const USAGE_PAGE_SIZE = 25;
+
+    // ── 官方模型标签插槽组件 ────────────────────────────────
+    //
+    // 职责单一：把官方交给我们的 provider / model / placement / selected 画成
+    // **非交互的内联内容**。点击、悬停、键盘、对勾全由官方选择器负责，
+    // 这里绝不接管——否则会把官方交互弄丢。
+    //
+    // 两份信息要同时画对：
+    //  1. 官方自己的 `model.badge`（{ tone, text }）。官方默认行为是：
+    //     输入框（trigger）里徽章在名字**前**，菜单（menu/option）里在名字**后**。
+    //     我们先接管了渲染，就得自己遵守这个位置约定，否则会和官方视觉不一致。
+    //  2. 我们的目录倍率（` · x0.11` 后缀）——那是连接器写进名字里的
+    //     字符串约定，官方不认（它只认 badge 字段），所以必须我们自己拆并画出来。
+    //
+    // text 可能是字符串，也可能是按语言分派的字符串对象——
+    // 不能直接丢给 React（对象会报 Objects are not valid as a React child）。
+    const resolveBadgeText = (text) => {
+      if (text === null || text === undefined) return null;
+      if (typeof text === 'string' || typeof text === 'number') return String(text);
+      if (typeof text === 'object') {
+        // 与官方同义：按当前语言取，取不到退英文，再退第一个字符串值。
+        const lang = (typeof document !== 'undefined' && document.documentElement?.lang) || 'zh';
+        const short = String(lang).slice(0, 2).toLowerCase();
+        const found = text[short] ?? text.en ?? Object.values(text).find(v => typeof v === 'string');
+        return typeof found === 'string' ? found : null;
+      }
+      return null;
+    };
+
+    const ModelLabel = memo(function ModelLabel(props) {
+      const { provider, model, placement, selected } = props ?? {};
+      if (!model) return null;
+      const name = modelLabel(model);
+      const rate = modelRate(model);
+      const badgeText = model.badge === undefined ? null : resolveBadgeText(model.badge.text);
+      const tone = model.badge?.tone;
+
+      // 徽章标签。非交互：官方契约要求贡献内容不可点击。
+      const badge = badgeText === null ? null : React.createElement('span', {
+        'data-model-badge-tone': tone ?? 'default',
+        style: {
+          flex: 'none', fontSize: '9.5px', lineHeight: '15px', padding: '0 5px',
+          borderRadius: '6px', marginInlineEnd: '4px',
+          fontFamily: 'ui-monospace, Consolas, monospace',
+          color: badgeToneColor(tone, selected),
+          background: badgeToneBg(tone, selected),
+          whiteSpace: 'nowrap',
+        },
+      }, badgeText);
+
+      const rateChip = rate === null ? null : React.createElement('span', {
+        'data-catalog-rate': String(rate),
+        style: {
+          flex: 'none', fontSize: '9.5px', lineHeight: '15px', padding: '0 5px',
+          borderRadius: '7px', marginInlineStart: '5px',
+          fontFamily: 'ui-monospace, Consolas, monospace', whiteSpace: 'nowrap',
+          color: rate === 0 ? 'var(--dsw-alias-state-success-primary, #3fb950)' : 'var(--dsw-alias-label-caption, #8b949e)',
+          background: rate === 0 ? 'rgba(63,185,80,.14)' : 'transparent',
+          border: `1px solid ${rate === 0 ? 'rgba(63,185,80,.45)' : 'var(--dsw-alias-border-l1, rgba(128,128,128,.35))'}`,
+        },
+      }, `x${rate}`);
+
+      const nameNode = React.createElement('span', {
+        style: {
+          minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        },
+      }, name);
+
+      // 位置约定必须与官方一致：trigger 里徽章在前，菜单里在后。
+      const badgeFirst = placement === 'trigger';
+      return React.createElement('span', {
+        'data-picker-plus-label': 'true',
+        'data-provider-id': provider?.id,
+        'data-model-id': model.id,
+        style: {
+          display: 'inline-flex', alignItems: 'baseline', minWidth: 0, maxWidth: '100%',
+          whiteSpace: 'nowrap', verticalAlign: 'baseline',
+        },
+      }, badgeFirst ? badge : null, nameNode, badgeFirst ? rateChip : null, badgeFirst ? null : badge, badgeFirst ? null : rateChip);
+    });
+
+    // 徽章色调 → 主题色。用宿主变量，跟随明暗主题而不是写死颜色。
+    function badgeToneColor(tone, selected) {
+      switch (String(tone ?? '')) {
+        case 'success': return 'var(--dsw-alias-state-success-primary, #3fb950)';
+        case 'warning': return 'var(--dsw-alias-state-warn-label, #d29922)';
+        case 'danger': return 'var(--dsw-alias-state-error-primary, #f85149)';
+        case 'info': return 'var(--dsw-alias-state-business-primary, #4c8bf5)';
+        default: return selected ? 'var(--dsw-alias-label-primary, inherit)' : 'var(--dsw-alias-label-caption, #8b949e)';
+      }
+    }
+    function badgeToneBg(tone) {
+      switch (String(tone ?? '')) {
+        case 'success': return 'rgba(63,185,80,.14)';
+        case 'warning': return 'rgba(210,153,34,.16)';
+        case 'danger': return 'rgba(248,81,73,.14)';
+        case 'info': return 'rgba(76,139,245,.14)';
+        default: return 'transparent';
+      }
+    }
 
     const UsageDetailPage = memo(function UsageDetailPage({ rpc, onClose }) {
       const t = translate;
@@ -3996,6 +6683,7 @@ window.__ModuleLoader__.load({
     exports.apply = apply;
     exports.__test = {
       modelKey,
+      resolveDefaultViewMode,
       splitModelKey,
       selectionFor,
       findChoice,
@@ -4028,12 +6716,26 @@ window.__ModuleLoader__.load({
       ensureRuntimeMetadata,
       mergeRuntimeMetadata,
       BRAND_LOGOS,
+      // 目录倍率后缀：连接器写在名字里的 ` · x<rate>` 约定。导出给测试，
+      // 因为「拆对了」和「拆坏了」在界面上都长得很像——一条断言能锁住。
+      modelLabel,
+      modelRate,
+      splitCatalogRate,
       matchesCapability,
       resolveBrandKey,
       taskMatches,
       recommendedRows,
       createFallbackDirectory,
       resetResilienceState,
+      // 两条路径都要能被验证。只测一条的测试，会放任另一条烂掉。
+      setTakeOverSlot: (on) => { takeOverSlot = on === true; },
+      // 测试钩子：测试环境没有宿主依赖，内联的官方组件必然加载失败，
+      // 所以「接管」那条路径需要注入一个占位对象才能验证。
+      setOfficialSelect: (value) => { officialSelect = value; },
+      // 自有组件导出给测试：测试环境没有宿主依赖，内联的官方组件
+      // 没法真正渲染，所以用它当占位来验证渲染结构。
+      ModelPickerPlus,
+      getTakeOverSlot: () => takeOverSlot,
       setCatalogRpcTimeout: (ms) => { catalogRpcTimeoutMs = ms; },
       setCatalogSwr: (ms) => { catalogSwrMs = ms; },
       // 用量展示：host 侧账本的汇总由宿主提供，这里只做格式化与排序。

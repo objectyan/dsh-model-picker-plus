@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-picker-plus",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "A grouped, searchable replacement for the DSH composer model selector.",
   "type": "module",
   "repository": {
@@ -21,7 +21,8 @@
     "client.js",
     "cordis.patch.yml",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "lib/official-model-selection.js"
   ],
   "scripts": {
     "test": "node --check client.js && node --check index.js && node tests/client.mjs && node tests/host-usage.mjs && node tests/host-apply.mjs && node tests/host-client-wiring.mjs",
@@ -47,7 +48,10 @@
         "@deepseek-ai/dsh-client-ui-model-selection",
         "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-api-session-controller",
-        "@deepseek-ai/dsh-client-locale"
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/cordis",
+        "@deepseek-ai/dsh-client-store"
       ],
       "platform": "web"
     }

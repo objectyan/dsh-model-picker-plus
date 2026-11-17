@@ -119,6 +119,24 @@ const modelIndex = plugin.__test.createModelIndex(groups);
 check('model index resolves catalog choices in O(1)', modelIndex.byKey.get(plugin.__test.modelKey('deepseek', 'deepseek-v4-pro'))?.model.id === 'deepseek-v4-pro');
 check('model index precomputes capabilities', modelIndex.byKey.get(plugin.__test.modelKey('deepseek', 'deepseek-v4-pro'))?.reasoning === true);
 check('duplicate display text is suppressed', plugin.__test.isDistinctText('MiMo V2.5 Free', 'mimo-v2.5-free') === false);
+// ── 目录倍率后缀：连接器把倍率追加在模型名后面（` · x0.00`）。
+// 本插件整槽替换官方选择器，所以必须自己拆——不拆就只能在标题里
+// 看到一截死文本，倍率徽章也画不出来。拆错了（多切/少切）界面看着
+// 也很像对的，所以这里把形状钉住。
+check('a catalog rate suffix is split off the name',
+  plugin.__test.modelLabel({ name: 'Hy3 · x0.00', id: 'hy3' }) === 'Hy3'
+  && plugin.__test.modelRate({ name: 'Hy3 · x0.00', id: 'hy3' }) === 0);
+check('a fractional rate keeps its value',
+  plugin.__test.modelLabel({ name: 'GLM-5.3-Flash · x0.08', id: 'glm' }) === 'GLM-5.3-Flash'
+  && plugin.__test.modelRate({ name: 'GLM-5.3-Flash · x0.08', id: 'glm' }) === 0.08);
+check('a name without a suffix is left untouched',
+  plugin.__test.modelLabel({ name: 'gpt-4x8-preview', id: 'g' }) === 'gpt-4x8-preview'
+  && plugin.__test.modelRate({ name: 'gpt-4x8-preview', id: 'g' }) === null);
+check('the suffix is only recognised at the end',
+  plugin.__test.modelLabel({ name: 'x0.11 · noted', id: 'n' }) === 'x0.11 · noted',
+  'a name that merely mentions a rate must not be truncated');
+check('a nameless model falls back to its id',
+  plugin.__test.modelLabel({ id: 'bare-id' }) === 'bare-id');
 check('capability descriptions remain visible', plugin.__test.isDistinctText('text input · 128K ctx', 'MiMo V2.5 Free', 'mimo-v2.5-free') === true);
 const capable = { id: 'x', name: 'X', description: 'text/image/audio input · tools · reasoning · 128K ctx' };
 check('tool capability is detected', plugin.__test.hasToolsModel(capable) === true);
@@ -130,6 +148,12 @@ check('omni capability is detected', plugin.__test.isOmniModel(capable) === true
 check('capability filter matches tools', plugin.__test.matchesCapability(groups[1], capable, 'tools') === true);
 check('coding task accepts reasoning models', plugin.__test.taskMatches(groups[0], groups[0].models[1], 'code') === true);
 check('vision task rejects text-only models', plugin.__test.taskMatches(groups[0], groups[0].models[1], 'vision') === false);
+// 打开模型库默认定位到「当前选中模型的厂商页」，不是推荐页；目录还没到时
+// 仍按 provider 定位，目录到了但厂商已消失才回退推荐。
+check('default view targets the current model provider', plugin.__test.resolveDefaultViewMode(current, groups) === 'provider:deepseek');
+check('default view targets provider even before the directory loads', plugin.__test.resolveDefaultViewMode(current, []) === 'provider:deepseek');
+check('default view falls back to recommend when no model is selected', plugin.__test.resolveDefaultViewMode(null, groups) === 'recommend');
+check('default view falls back to recommend when the provider vanished', plugin.__test.resolveDefaultViewMode({ provider: 'gone', model: 'x' }, groups) === 'recommend');
 check('recommendations prefer current matching task', plugin.__test.recommendedRows(groups, current, [], 'reasoning')[0].model.id === 'deepseek-v4-pro');
 check('free task only recommends free providers', plugin.__test.recommendedRows(groups, current, [], 'free').every(row => plugin.__test.isFreeModel(row.group, row.model)) === true);
 // 「快速」没有测速数据（健康解耦）：按 当前 > 最近使用 > 名称 排序。
@@ -278,9 +302,12 @@ const directory = {
   load: async () => {},
   select: async () => {},
 };
+const optionEntriesForTest = [];
 const slots = {
   inject(name, callback) { injectedSlots.push(name); return callback(); },
   register(options, component) { registrations.push({ options, component }); },
+  entries(name) { return name === 'conversation.input.model.options' ? optionEntriesForTest : []; },
+  subscribe() { return () => {}; },
 };
 const ctx = {
   get: (name) => name === 'locale'
@@ -296,16 +323,42 @@ const ctx = {
     });
   },
 };
+// 默认接管整槽，且接管组件就是自有的分组选择器 ModelPickerPlus
+//（搜索框 + 能力胶囊 + 收藏/最近 + Provider 分组折叠），厂商多时也好找。
+check('the native slot is taken over by default',
+  plugin.__test.getTakeOverSlot() === true,
+  'the takeover target is the grouped ModelPickerPlus');
+// 主槽注册的组件必须是自有分组实现，且不再依赖内联官方组件作为主选。
+// 仍注入一个占位 officialSelect，用来验证「即使官方组件可用也不抢占主槽」。
+plugin.__test.setOfficialSelect({ ModelSelect: () => null });
 plugin.apply(ctx);
 check('registers locale dictionary', localeRegistered?.ns === 'model-picker-plus');
 check('injects the native model slot', injectedSlots.includes('conversation.input.model'), injectedSlots.join(','));
 check('injects a settings page for the usage ledger', injectedSlots.includes('settings.section'), injectedSlots.join(','));
+// 官方标签插槽：这是「只改名字渲染、不接管选择器」的正式接入点。
+// 两种模式下它都必须注册——即使接管了整槽，将来把 takeover 关掉时
+// 标签的倍率/徒章依然能画出来。
+check('injects the official model-label extension point',
+  injectedSlots.includes('conversation.input.model.label'), injectedSlots.join(','));
+check('the model-label slot is registered bare (no priority, no list id)', (() => {
+  const labelReg = registrations.find(r => r.options.name === 'conversation.input.model.label');
+  return Boolean(labelReg) && labelReg.options.priority === undefined && labelReg.options.id === undefined;
+})(), 'the official extension point declares only its name');
 // 主槽位必须是 conversation.input.model 那一个（设置页是列表型挂点，不该混进来）。
 const reg = registrations.find(r => r.options.name === 'conversation.input.model');
 check('exactly one single-slot registration', registrations.filter(r => r.options.name === 'conversation.input.model').length === 1,
   `n=${registrations.filter(r => r.options.name === 'conversation.input.model').length}`);
 check('registration targets conversation.input.model', reg?.options.name === 'conversation.input.model');
 check('single-slot registration shadows the built-in', reg.options.priority === -1, String(reg.options.priority));
+check('main slot renders the grouped ModelPickerPlus, not the official flat select',
+  reg.component === plugin.__test.ModelPickerPlus,
+  'component must be the grouped picker even when officialSelect is available');
+// 根因回归：官方 dsh-client-ui-model-selection 已声明 label 子槽；宿主
+// SlotCore.register 遇到重复 children 声明会抛错，导致整槽注册被静默丢弃。
+// 因此主槽注册绝不能再声明 children。
+check('main slot declares no children (would collide with the official slot)',
+  reg.options.children === undefined,
+  'duplicate child-slot declaration silently drops the takeover registration');
 check('single-slot registration has no list id', reg.options.id === undefined);
 const share = reg.options.inject('s1');
 check('share proxy reads the real store', share.directory.getSnapshot().status === 'ready' && share.directory.getSnapshot().groups.length === 2);
@@ -810,6 +863,26 @@ const tree = reg.component({ locked: false, ...share });
 check('component renders with directory share', tree !== null && typeof tree === 'object');
 check('trigger shows the current model label', JSON.stringify(tree).includes('DeepSeek-V4-Pro'));
 check('trigger shows the selected effort', JSON.stringify(tree).includes('Low'));
+// 回归：选中带倍率后缀 + 官方 badge 的模型后，触发条必须仍显示倍率芯片
+// （x0）和限时免费徽章——原来只画纯名字，选完就「没了」。
+const ratedStore = {
+  getSnapshot: () => ({
+    current: { provider: 'go', model: 'hy4flash-free' },
+    groups: [{ id: 'go', name: 'OpenCode Go', models: [{
+      id: 'hy4flash-free',
+      name: 'Hy4 flash · x0.00',
+      badge: { text: '限时免费', tone: 'success' },
+    }] }],
+    failures: [], status: 'ready', error: null,
+  }),
+  subscribe: () => () => {},
+};
+const ratedShare = { ...share, directory: { store: ratedStore, load: async () => {}, select: async () => {} } };
+const ratedState = new Map([[0, ratedStore.getSnapshot()]]);
+const ratedTree = modules.react.__withState(ratedState, () => reg.component({ locked: false, ...ratedShare }));
+const ratedJson = JSON.stringify(ratedTree);
+check('trigger keeps rate chip after selection', ratedJson.includes('"data-catalog-rate":"0"'), ratedJson.includes('x0') ? 'x0 present' : 'MISSING');
+check('trigger keeps official badge after selection', ratedJson.includes('"data-official-badge":"true"') && ratedJson.includes('限时免费'));
 const findButton = (node) => {
   if (!node || typeof node !== 'object') return null;
   if (node.type === 'button') return node;
@@ -1054,14 +1127,15 @@ check('switchable-effort rows drop the redundant reasoning pill', (() => {
   ]), () => reg.component(mkShare(manyGroups)));
   const collapsedKeys = vendorTabKeys(collapsed);
   const expandedKeys = vendorTabKeys(expanded);
-  check('collapsed state shows a more tab', collapsedKeys.includes('__more_vendors__'), JSON.stringify(collapsedKeys));
-  // 展开后：全部 14 个厂家都在，没有「更多」。
-  const vendorShown = expandedKeys.filter(k => String(k).startsWith('provider:')).length;
-  check('expanding reveals every vendor and drops the more tab',
-    vendorShown === 14 && !expandedKeys.includes('__more_vendors__') && expandedKeys.includes('__fewer_vendors__'),
+  // 现在所有厂家一律全放，不再折叠成「更多 N」——无论 vendorExpanded 取值。
+  const vendorShown = collapsedKeys.filter(k => String(k).startsWith('provider:')).length;
+  check('every vendor shows with no more/fewer tab',
+    vendorShown === 14
+    && !collapsedKeys.includes('__more_vendors__')
+    && !collapsedKeys.includes('__fewer_vendors__')
+    && !expandedKeys.includes('__more_vendors__')
+    && !expandedKeys.includes('__fewer_vendors__'),
     `shown=${vendorShown}`);
-  check('expanding shows strictly more vendors than collapsed',
-    vendorShown > collapsedKeys.filter(k => String(k).startsWith('provider:')).length);
 }
 // 厂家按使用频次排序：常用优先，首次保持目录默认顺序。
 {
@@ -1733,11 +1807,136 @@ check('menu exposes an explicit close action', menuJson.includes('[model-picker-
 check('current card exposes change-model action', menuJson.includes('[model-picker-plus]changeModel'));
 check('menu shows keyboard navigation hints', menuJson.includes('[model-picker-plus]keyboardNavigate') && menuJson.includes('[model-picker-plus]keyboardUse') && menuJson.includes('[model-picker-plus]keyboardClose'));
 check('dialog and search expose accessible names', menuJson.includes('"aria-modal":true') && menuJson.includes('"aria-label":"[model-picker-plus]search"'));
+// 搜索框提为顶部全局检索条：横跨两栏（gridColumn '1 / 3'）且位于第一行。
+check('search is a global bar spanning both columns at the top', menuJson.includes('"gridColumn":"1 / 3","gridRow":"1"'));
+check('panel z-index sits between ordinary UI (100) and the official confirm modal (1000)', (() => {
+  const m = menuJson.match(/"zIndex":(\d+)/g) || [];
+  // 低于 1000：团队开关关闭时的确认框 Modal(_root_1ytzq_6, z-index:1000)要盖在面板上；
+  // 高于 100：面板要盖住普通聊天 UI；同时天然低于 tooltip(1100)/子菜单(1101)，ⓘ 提示不被挡。
+  return m.length > 0 && m.every(s => { const z = Number(s.match(/\d+/)[0]); return z > 100 && z < 1000; });
+})(), 'zIndex values in menu: ' + JSON.stringify(menuJson.match(/"zIndex":\d+/g)));
 check('tabs and task chips expose selection state', menuJson.includes('"role":"tablist"') && menuJson.includes('"aria-selected":true') && menuJson.includes('"aria-pressed":true'));
 check('recommend view hides the redundant capability chips', !menuJson.includes('[model-picker-plus]filterVision'));
 // 快照加持后 fixture 全目录四种能力齐备（flash 视觉、Zen 免费、双方推理/工具）。
 check('all-models view derives chips from present capabilities', allViewJson.includes('[model-picker-plus]filterReasoning') && allViewJson.includes('[model-picker-plus]filterVision') && allViewJson.includes('[model-picker-plus]filterFree') && allViewJson.includes('[model-picker-plus]filterTools'));
 check('provider controls expose expanded state', failInlineJson.includes('"aria-expanded":true'));
+
+// 左右两栏布局：根容器用 grid 分出「左导航 + 右列表」两列。
+check('menu root uses a two-column grid layout',
+  menuJson.includes('"gridTemplateColumns":"220px minmax(0, 1fr)"')
+  && menuJson.includes('"display":"grid"'));
+// 左导航列竖排（视图/厂家导航项从上到下）。
+check('nav items stack vertically in the left column',
+  menuJson.includes('"flexDirection":"column"') && menuJson.includes('"alignItems":"stretch"'));
+// 滚动只发生在视图/厂家导航块内部，标题/搜索/团队开关固定在顶部：
+// 找到 data-tab-row='all' 的父容器（tabbar），它必须 overflowY:auto；
+// 而左列外层容器本身不再整体滚动。
+{
+  const findParentOfTablist = (node) => {
+    if (!node || typeof node !== 'object') return null;
+    const kids = Array.isArray(node.children) ? node.children.flat(Infinity).filter(Boolean) : [];
+    if (kids.some(c => c?.props?.['data-tab-row'] === 'all')) return node;
+    for (const c of kids) { const hit = findParentOfTablist(c); if (hit) return hit; }
+    return null;
+  };
+  const tabbarBox = findParentOfTablist(menuTree);
+  check('only the vendor/view nav block scrolls, not the whole left column',
+    tabbarBox?.props?.style?.overflowY === 'auto',
+    'tabbar overflowY=' + String(tabbarBox?.props?.style?.overflowY));
+}
+// 固定视图（推荐/最近/收藏/全部模型）sticky 钉在导航区顶部，只有厂家列表滚。
+// 用户诉求：固定视图跟着滚看着别扭——必须钉住，且不新开 tablist 容器。
+{
+  const findNode = (node, predicate, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (predicate(node)) out.push(node);
+    const kids = Array.isArray(node.children) ? node.children.flat(Infinity).filter(Boolean) : [node.children];
+    for (const child of kids) findNode(child, predicate, out);
+    return out;
+  };
+  const fixedBoxes = findNode(menuTree, n => n.props?.['data-fixed-views'] === 'true');
+  const vendorBoxes = findNode(menuTree, n => n.props?.['data-vendor-list'] === 'true');
+  check('fixed views are sticky-pinned outside the scrolling vendor list',
+    fixedBoxes.length === 1 && fixedBoxes[0].props?.style?.position === 'sticky'
+      && fixedBoxes[0].props?.style?.top === 0 && vendorBoxes.length === 1,
+    `fixed=${fixedBoxes.length} vendor=${vendorBoxes.length}`);
+  check('fixed views lay out two per row (2x2 grid, not a single column)',
+    fixedBoxes[0]?.props?.style?.display === 'grid'
+      && fixedBoxes[0]?.props?.style?.gridTemplateColumns === 'repeat(2, minmax(0, 1fr))',
+    String(fixedBoxes[0]?.props?.style?.gridTemplateColumns));
+}
+// 「模型 → / 推理等级 →」两级下钻已移除（视图/推理入口已直接摊在界面上，
+// 重复入口无意义）；团队开关所在的容器仍保留在左栏。
+check('redundant two-level drill-down entries are removed',
+  !menuJson.includes('[model-picker-plus]menuAria')
+  && !menuJson.includes('[model-picker-plus]menuModel')
+  && !menuJson.includes('[model-picker-plus]menuEffort'));
+
+// 方案2：分组面板自动渲染 conversation.input.model.options 子槽的**所有**条目。
+// 这样官方以后往这个菜单加任何附加项（团队开关只是目前的一个）都会自动出现，
+// 不必每次手工补一遍。测试用两个假条目验证：inject 透传、标准 hooks 透传、
+// owner props（locked/dismiss/reportFailure）、locale 绑定，以及「未来新条目」
+// 无需改插件就能自动渲染。
+const autoMenuState = new Map([[1, true], [4, { left: 0, bottom: 0, width: 700, maxHeight: 560 }]]);
+const hookProbe = { useProjection: () => ({ enabled: true }), useSession: () => false, useSessions: () => ({}) };
+const ownerCalls = { dismiss: 0, failures: [] };
+let receivedProps = [];
+const FakeOption = (props) => { receivedProps.push(props); return { type: 'fake-option', props }; };
+const FakeOption2 = (props) => { receivedProps.push(props); return { type: 'fake-option-2', props }; };
+optionEntriesForTest.length = 0;
+optionEntriesForTest.push(
+  { id: 'agent-team', component: FakeOption, locale: 'agent-team', inject: (sid) => ({ selectTeamMode: () => Promise.resolve(null), sid }) },
+  { id: 'future-feature', component: FakeOption2, locale: 'agent-team', inject: () => ({ marker: 'future' }) },
+);
+let autoTree = null;
+try {
+  autoTree = modules.react.__withState(autoMenuState, () => reg.component({
+    locked: false, ...share,
+    useProjection: hookProbe.useProjection, useSession: hookProbe.useSession, useSessions: hookProbe.useSessions,
+    sessionId: 's1',
+    readOptionEntries: () => optionEntriesForTest,
+    subscribeOptions: () => () => {},
+    bindLocale: (ns) => (key) => `[${ns}]${key}`,
+  }));
+} catch (error) { /* 下面 check 会报出 */ }
+const autoJson = JSON.stringify(autoTree);
+check('auto-render renders every options-slot entry (incl. future ones)',
+  autoJson.includes('"data-model-options":"true"')
+  && receivedProps.length === 2
+  && receivedProps.some(p => p.marker === 'future'),
+  `entries=${receivedProps.length}`);
+check('auto-render passes standard hooks + injected face to each entry',
+  receivedProps.every(p => typeof p.useProjection === 'function' && typeof p.useSession === 'function' && typeof p.useSessions === 'function')
+  && receivedProps.some(p => p.sid === 's1')
+  && receivedProps.every(p => typeof p.t === 'function' && p.t('mode.label') === '[agent-team]mode.label'));
+check('auto-render supplies owner props (locked/dismiss/reportFailure)',
+  receivedProps.every(p => p.locked === false && typeof p.dismiss === 'function' && typeof p.reportFailure === 'function'));
+// dismiss 绝不能关闭模型面板：官方 TeamModeToggle 关闭团队模式时会先调 dismiss()
+// 再弹独立确认框，若 dismiss 关菜单，确认框弹出时模型面板也被一起关掉。
+const dismissBefore = modules.react.setterCalls.length;
+receivedProps[0]?.dismiss?.();
+const dismissSetters = modules.react.setterCalls.slice(dismissBefore);
+check('owner dismiss does NOT close the menu', !dismissSetters.some(s => s.index === 1 && s.next === false),
+  JSON.stringify(dismissSetters));
+receivedProps[0]?.reportFailure?.('boom');
+check('owner reportFailure is wired', true);
+// 槽里没有任何条目时，不渲染 options 容器（不留空壳）。
+receivedProps.length = 0;
+const emptyTree = modules.react.__withState(autoMenuState, () => reg.component({
+  locked: false, ...share, useProjection: hookProbe.useProjection, useSession: hookProbe.useSession,
+  sessionId: 's1', readOptionEntries: () => [], subscribeOptions: () => () => {},
+  bindLocale: (ns) => (key) => `[${ns}]${key}`,
+}));
+check('auto-render omits empty options container', !JSON.stringify(emptyTree).includes('"data-model-options":"true"'));
+optionEntriesForTest.length = 0;
+
+function findNodeSafe(node, predicate) {
+  if (!node || typeof node !== 'object') return null;
+  if (predicate(node)) return node;
+  const kids = Array.isArray(node.children) ? node.children : [node.children];
+  for (const child of kids) { const found = findNodeSafe(child, predicate); if (found) return found; }
+  return null;
+}
 const findNode = (node, predicate) => {
   if (!node || typeof node !== 'object') return null;
   if (predicate(node)) return node;
