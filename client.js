@@ -2143,7 +2143,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.7.0';
+    const VERSION = '0.7.1';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
