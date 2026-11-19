@@ -4,6 +4,10 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.2] - 2026-11-19
+
+市场卡片增强：在 `package.json` 声明 `engines.dsh: ">=0.2.1-rc.1 <0.3.0"`，dsh-market / awesome-dsh-plugin 详情页据此显示 DSH 版本兼容徽章（此前显示「未声明宿主要求」）。无功能变更。
+
 ## [0.7.1] - 2026-11-17
 
 文档同步版本：无功能变更。README 全面对齐 0.7.0 的分组模型库形态（顶部全局检索条 / 左右两栏 / 全部厂家不折叠 / 打开定位当前厂商 / 官方 options 子槽自动同步 / 触发条倍率徽章），安装与发布示例同步到 v0.7.1。仅因 npm 不允许覆写 0.7.0 的包内 README 而发此版。

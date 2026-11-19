@@ -1,8 +1,11 @@
 {
   "name": "dsh-model-picker-plus",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "A grouped, searchable replacement for the DSH composer model selector.",
   "type": "module",
+  "engines": {
+    "dsh": ">=0.2.1-rc.1 <0.3.0"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/objectyan/dsh-model-picker-plus.git"

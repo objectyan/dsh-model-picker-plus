@@ -1,6 +1,6 @@
 ## 功能
 
-把 DSH 原生的扁平模型选择器换成一个可搜索、可分组的模型库——**只改模型下拉这一处**，其它界面不动。当前版本：`0.7.1`。
+把 DSH 原生的扁平模型选择器换成一个可搜索、可分组的模型库——**只改模型下拉这一处**，其它界面不动。当前版本：`0.7.2`。
 
 **左右两栏面板**
 - **顶部全局检索条**：搜索框横跨两栏，搜模型名 / ID / 描述 / 厂家 / 用途，一处输入全局生效。
@@ -47,10 +47,10 @@ dsh plugin --profile web add dsh-model-picker-plus
 dsh plugin --profile web add github:objectyan/dsh-model-picker-plus
 
 # 指定版本 tag
-dsh plugin --profile web add "github:objectyan/dsh-model-picker-plus#v0.7.1"
+dsh plugin --profile web add "github:objectyan/dsh-model-picker-plus#v0.7.2"
 
 # 或直接用 Release 的 tgz 链接
-dsh plugin --profile web add "https://github.com/objectyan/dsh-model-picker-plus/releases/download/v0.7.1/dsh-model-picker-plus-0.7.1.tgz"
+dsh plugin --profile web add "https://github.com/objectyan/dsh-model-picker-plus/releases/download/v0.7.2/dsh-model-picker-plus-0.7.2.tgz"
 ```
 
 ## 发布
@@ -58,7 +58,7 @@ dsh plugin --profile web add "https://github.com/objectyan/dsh-model-picker-plus
 打 tag 即发布，走 npm 可信发布（Trusted Publishing），无需长期 token：
 
 ```sh
-git tag v0.7.1 && git push origin main --tags
+git tag v0.7.2 && git push origin main --tags
 ```
 
 Workflow 会依次校验 **tag 与 package.json 版本一致** → **跑测试** → **发布**，任一环节失败都不会推到 npm。
