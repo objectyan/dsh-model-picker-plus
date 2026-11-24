@@ -4,6 +4,10 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.3] - 2026-11-24
+
+修复「选模型点了没反应」：宿主的 `ModelDirectory.select()` 在失败时**不抛异常**，而是返回 `{ ok: false, error }`。门面 `select` 此前只 `await` 不看返回值，把失败静默成成功——面板关闭、模型没换、界面上一个字都不提示。现在检查返回值：`session/writer-held` 翻译成友好的「会话已被占用」文案，其余透传底层真实错误；失败不再关闭面板。附带说明：控制台里的 `net::ERR_FAILED  dsh-app:///app/plugins/events` 是 HMR 热更新的 SSE 长连接断开重连噪声（该端点实测 HTTP 200），与选模型无关。
+
 ## [0.7.2] - 2026-11-19
 
 市场卡片增强：在 `package.json` 声明 `engines.dsh: ">=0.2.1-rc.1 <0.3.0"`，dsh-market / awesome-dsh-plugin 详情页据此显示 DSH 版本兼容徽章（此前显示「未声明宿主要求」）。无功能变更。

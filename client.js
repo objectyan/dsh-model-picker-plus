@@ -2143,7 +2143,7 @@ window.__ModuleLoader__.load({
     const memo = React.memo ?? (component => component);
 
     const NS = 'model-picker-plus';
-    const VERSION = '0.7.2';
+    const VERSION = '0.7.3';
     const RECENTS_KEY = 'dsh-model-picker-plus:recents';
     const FAVORITES_KEY = 'dsh-model-picker-plus:favorites';
     const MAX_RECENTS = 8;
@@ -2263,6 +2263,7 @@ window.__ModuleLoader__.load({
         selectNotReady: '模型目录尚未就绪，请稍后重试',
         selectBindUnbound: '该会话还没绑定模型目录，稍等片刻再试即可',
         selectBindError: '模型目录服务报错',
+        sessionInUse: '当前会话已被占用，可能是另一个 DSH 正在使用它；退出其他 DSH 后重试',
         search: '搜索模型、Provider、用途…',
         title: '模型库',
         current: '当前',
@@ -2428,6 +2429,7 @@ window.__ModuleLoader__.load({
         selectNotReady: 'The model directory is not ready yet — try again shortly',
         selectBindUnbound: 'This session has no model directory bound yet — try again in a moment',
         selectBindError: 'The model directory service reported an error',
+        sessionInUse: 'This session is already in use, possibly by another running DSH; quit the other DSH and try again',
         search: 'Search models, providers, use cases…',
         title: 'Model library',
         current: 'Current',
@@ -5898,7 +5900,18 @@ window.__ModuleLoader__.load({
                     // 上层使用 subagentLocked 文案，这是唯一该编造诊断的场景。
                     return false;
                   }
-                  await real.select(selection); // 保留底层具体错误，交给界面显示。
+                  // 宿主的 ModelDirectory.select() 失败时**不抛异常**，而是返回
+                  // { ok: false, error }。早期实现只 await 不看返回值，把失败静默
+                  // 成「成功」：面板照样关闭、模型没换、界面上一个字都不提示 ——
+                  // 用户看到的就是「点了没反应」。这里对齐官方 ModelSelect 的处理。
+                  const result = await real.select(selection);
+                  if (result !== undefined && result !== null && result.ok === false) {
+                    const failure = result.error;
+                    if (failure && failure.code === 'session/writer-held') {
+                      throw new Error(translate('sessionInUse'));
+                    }
+                    throw new Error(String(failure?.message ?? failure?.code ?? 'model selection failed'));
+                  }
                   return true;
                 },
                 // 官方 conversation.input.model.options 子槽的读取器：交给组件

@@ -2064,6 +2064,26 @@ console.log('\n== the shell no longer invents a diagnosis on bind failure ==');
     /if \(!available\) \{[\s\S]{0,200}return false;/.test(head));
   check('bind state is cleared on a successful bind',
     source.includes('bindFailure = null;'));
+
+  // 病灶二（用户实测「点了没反应」）：宿主的 ModelDirectory.select() 失败时
+  // 不抛异常，而是返回 { ok: false, error }。只 await 不看返回值，等于把
+  // 失败静默成成功 —— 面板关闭、模型没换、界面一个字都不提示。
+  const selectBody = source.slice(facadeStart, facadeStart + 2600);
+  const okGuard = selectBody.indexOf('result.ok === false');
+  check('a failed select result ({ ok: false }) is surfaced, not swallowed',
+    /const result = await real\.select\(selection\)/.test(selectBody) && okGuard > 0,
+    `guard=${okGuard}`);
+  check('the { ok: false } branch throws instead of returning true',
+    okGuard > 0 && /throw new Error\(/.test(selectBody.slice(okGuard)), selectBody.slice(Math.max(0, okGuard), okGuard + 200));
+  check('session/writer-held maps to the friendly sessionInUse copy',
+    selectBody.includes("failure.code === 'session/writer-held'")
+    && selectBody.includes("translate('sessionInUse')"));
+  check('the concrete remote failure text reaches the user',
+    /failure\?\.message/.test(selectBody));
+  check('sessionInUse exists in both dictionaries',
+    typeof plugin.__test.DICT.zh.sessionInUse === 'string'
+    && typeof plugin.__test.DICT.en.sessionInUse === 'string'
+    && /[A-Za-z]{4}/.test(plugin.__test.DICT.en.sessionInUse));
 }
 
 if (failures > 0) {

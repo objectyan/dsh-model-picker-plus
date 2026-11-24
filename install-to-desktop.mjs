@@ -1,4 +1,4 @@
-// One-shot: register the locally built 0.7.2 tgz into the desktop profile.
+// One-shot: register the locally built 0.7.3 tgz into the desktop profile.
 // CLI `dsh plugin add` on desktop only writes dependencies and skips
 // dsh.profile.bundles (the Electron-managed-profile rule), which leaves the
 // plugin installed-but-not-mounted. This script writes BOTH, so a restart
@@ -10,7 +10,7 @@ const profile = 'C:/Users/OY/.dsh/profiles/desktop';
 const pkgPath = path.join(profile, 'package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 
-const spec = 'file:D:/OY/Deepseek/dsh-model-picker-plus/dsh-model-picker-plus-0.7.2.tgz';
+const spec = 'file:D:/OY/Deepseek/dsh-model-picker-plus/dsh-model-picker-plus-0.7.3.tgz';
 pkg.dependencies = pkg.dependencies || {};
 pkg.dependencies['dsh-model-picker-plus'] = spec;
 
